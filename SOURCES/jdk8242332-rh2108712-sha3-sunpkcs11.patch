@@ -1,0 +1,2695 @@
+commit b8711800e3cd9132ad2b195c82cf816210feb77d
+Author: Andrew Hughes <gnu.andrew@redhat.com>
+Date:   Thu Oct 5 03:13:01 2023 +0100
+
+    Backport 78be334c3817a1b5840922a9bf1339a40dcc5185
+
+diff --git a/src/java.base/share/classes/sun/security/util/KnownOIDs.java b/src/java.base/share/classes/sun/security/util/KnownOIDs.java
+index b5cc3b05f1..7e235c90dd 100644
+--- a/src/java.base/share/classes/sun/security/util/KnownOIDs.java
++++ b/src/java.base/share/classes/sun/security/util/KnownOIDs.java
+@@ -155,6 +155,14 @@ public enum KnownOIDs {
+     SHA256withDSA("2.16.840.1.101.3.4.3.2"),
+     SHA384withDSA("2.16.840.1.101.3.4.3.3"),
+     SHA512withDSA("2.16.840.1.101.3.4.3.4"),
++    SHA3_224withDSA("2.16.840.1.101.3.4.3.5", "SHA3-224withDSA"),
++    SHA3_256withDSA("2.16.840.1.101.3.4.3.6", "SHA3-256withDSA"),
++    SHA3_384withDSA("2.16.840.1.101.3.4.3.7", "SHA3-384withDSA"),
++    SHA3_512withDSA("2.16.840.1.101.3.4.3.8", "SHA3-512withDSA"),
++    SHA3_224withECDSA("2.16.840.1.101.3.4.3.9", "SHA3-224withECDSA"),
++    SHA3_256withECDSA("2.16.840.1.101.3.4.3.10", "SHA3-256withECDSA"),
++    SHA3_384withECDSA("2.16.840.1.101.3.4.3.11", "SHA3-384withECDSA"),
++    SHA3_512withECDSA("2.16.840.1.101.3.4.3.12", "SHA3-512withECDSA"),
+     SHA3_224withRSA("2.16.840.1.101.3.4.3.13", "SHA3-224withRSA"),
+     SHA3_256withRSA("2.16.840.1.101.3.4.3.14", "SHA3-256withRSA"),
+     SHA3_384withRSA("2.16.840.1.101.3.4.3.15", "SHA3-384withRSA"),
+diff --git a/src/java.base/share/classes/sun/security/util/SignatureUtil.java b/src/java.base/share/classes/sun/security/util/SignatureUtil.java
+index 32c089fd96..7d5c0c7e29 100644
+--- a/src/java.base/share/classes/sun/security/util/SignatureUtil.java
++++ b/src/java.base/share/classes/sun/security/util/SignatureUtil.java
+@@ -168,4 +168,22 @@ public class SignatureUtil {
+             InvalidKeyException {
+         SharedSecrets.getJavaSecuritySignatureAccess().initSign(s, key, params, sr);
+     }
++
++    /**
++     * Extracts the digest algorithm name from a signature
++     * algorithm name in either the "DIGESTwithENCRYPTION" or the
++     * "DIGESTwithENCRYPTIONandWHATEVER" format.
++     *
++     * It's OK to return "SHA1" instead of "SHA-1".
++     */
++    public static String extractDigestAlgFromDwithE(String signatureAlgorithm) {
++        signatureAlgorithm = signatureAlgorithm.toUpperCase(Locale.ENGLISH);
++        int with = signatureAlgorithm.indexOf("WITH");
++        if (with > 0) {
++            return signatureAlgorithm.substring(0, with);
++        } else {
++            throw new IllegalArgumentException(
++                    "Unknown algorithm: " + signatureAlgorithm);
++        }
++    }
+ }
+diff --git a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Digest.java b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Digest.java
+index 41fe61b8a1..daf0bc9f69 100644
+--- a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Digest.java
++++ b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Digest.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2003, 2019, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -41,7 +41,8 @@ import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
+ 
+ /**
+  * MessageDigest implementation class. This class currently supports
+- * MD2, MD5, SHA-1, SHA-224, SHA-256, SHA-384, and SHA-512.
++ * MD2, MD5, SHA-1, SHA-2 family (SHA-224, SHA-256, SHA-384, and SHA-512)
++ * and SHA-3 family (SHA3-224, SHA3-256, SHA3-384, and SHA3-512) of digests.
+  *
+  * Note that many digest operations are on fairly small amounts of data
+  * (less than 100 bytes total). For example, the 2nd hashing in HMAC or
+@@ -104,16 +105,20 @@ final class P11Digest extends MessageDigestSpi implements Cloneable,
+             break;
+         case (int)CKM_SHA224:
+         case (int)CKM_SHA512_224:
++        case (int)CKM_SHA3_224:
+             digestLength = 28;
+             break;
+         case (int)CKM_SHA256:
+         case (int)CKM_SHA512_256:
++        case (int)CKM_SHA3_256:
+             digestLength = 32;
+             break;
+         case (int)CKM_SHA384:
++        case (int)CKM_SHA3_384:
+             digestLength = 48;
+             break;
+         case (int)CKM_SHA512:
++        case (int)CKM_SHA3_512:
+             digestLength = 64;
+             break;
+         default:
+diff --git a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11KeyGenerator.java b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11KeyGenerator.java
+index 926414608c..f343e6025e 100644
+--- a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11KeyGenerator.java
++++ b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11KeyGenerator.java
+@@ -36,7 +36,9 @@ import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
+ 
+ /**
+  * KeyGenerator implementation class. This class currently supports
+- * DES, DESede, AES, ARCFOUR, and Blowfish.
++ * DES, DESede, AES, ARCFOUR, Blowfish, Hmac using MD5, SHA, SHA-2 family
++ * (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224, SHA-512/256), and SHA-3
++ * family (SHA3-224, SHA3-256, SHA3-384, SHA3-512) of digests.
+  *
+  * @author  Andreas Sterbenz
+  * @since   1.5
+@@ -65,6 +67,48 @@ final class P11KeyGenerator extends KeyGeneratorSpi {
+     // are supported.
+     private boolean supportBothKeySizes;
+ 
++    // for determining if the specified key size is valid
++    private final CK_MECHANISM_INFO range;
++
++    // utility method for query the native key sizes and enforcing the
++    // java-specific lower limit; returned values are in bits
++    private static CK_MECHANISM_INFO getSupportedRange(Token token,
++        long mech) throws ProviderException {
++        // No need to query for fix-length algorithms
++        if (mech == CKM_DES_KEY_GEN || mech == CKM_DES2_KEY_GEN ||
++            mech == CKM_DES3_KEY_GEN) {
++            return null;
++        }
++
++        // Explicitly disallow keys shorter than 40-bits for security
++        int lower = 40;
++        int upper = Integer.MAX_VALUE;
++        try {
++            CK_MECHANISM_INFO info = token.getMechanismInfo(mech);
++            if (info != null) {
++                boolean isBytes = ((mech != CKM_GENERIC_SECRET_KEY_GEN
++                        && mech != CKM_RC4_KEY_GEN) || info.iMinKeySize < 8);
++                lower = Math.max(lower, (isBytes?
++                        Math.multiplyExact(info.iMinKeySize, 8) :
++                        info.iMinKeySize));
++                // NSS CKM_GENERIC_SECRET_KEY_GEN mech info is not precise;
++                // its upper limit is too low and does not match its impl
++                if (mech == CKM_GENERIC_SECRET_KEY_GEN &&
++                    info.iMaxKeySize <= 32) {
++                    // ignore and leave upper limit at MAX_VALUE;
++                } else if (info.iMaxKeySize != Integer.MAX_VALUE) {
++                    upper = (isBytes?
++                            Math.multiplyExact(info.iMaxKeySize, 8) :
++                            info.iMaxKeySize);
++                }
++            }
++        } catch (PKCS11Exception p11e) {
++            // Should never happen
++            throw new ProviderException("Cannot retrieve mechanism info", p11e);
++        }
++        return new CK_MECHANISM_INFO(lower, upper, 0 /* flags not used */);
++    }
++
+     /**
+      * Utility method for checking if the specified key size is valid
+      * and within the supported range. Return the significant key size
+@@ -78,8 +122,15 @@ final class P11KeyGenerator extends KeyGeneratorSpi {
+      * @throws ProviderException if this mechanism isn't supported by SunPKCS11
+      * or underlying native impl.
+      */
++    // called by P11SecretKeyFactory to check key size
+     static int checkKeySize(long keyGenMech, int keySize, Token token)
+         throws InvalidAlgorithmParameterException, ProviderException {
++        CK_MECHANISM_INFO range = getSupportedRange(token, keyGenMech);
++        return checkKeySize(keyGenMech, keySize, range);
++    }
++
++    private static int checkKeySize(long keyGenMech, int keySize,
++        CK_MECHANISM_INFO range) throws InvalidAlgorithmParameterException {
+         int sigKeySize;
+         switch ((int)keyGenMech) {
+             case (int)CKM_DES_KEY_GEN:
+@@ -102,45 +153,17 @@ final class P11KeyGenerator extends KeyGeneratorSpi {
+                 break;
+             default:
+                 // Handle all variable-key-length algorithms here
+-                CK_MECHANISM_INFO info = null;
+-                try {
+-                    info = token.getMechanismInfo(keyGenMech);
+-                } catch (PKCS11Exception p11e) {
+-                    // Should never happen
+-                    throw new ProviderException
+-                            ("Cannot retrieve mechanism info", p11e);
+-                }
+-                if (info == null) {
+-                    // XXX Unable to retrieve the supported key length from
+-                    // the underlying native impl. Skip the checking for now.
+-                    return keySize;
+-                }
+-                // PKCS#11 defines these to be in number of bytes except for
+-                // RC4 which is in bits. However, some PKCS#11 impls still use
+-                // bytes for all mechs, e.g. NSS. We try to detect this
+-                // inconsistency if the minKeySize seems unreasonably small.
+-                int minKeySize = info.iMinKeySize;
+-                int maxKeySize = info.iMaxKeySize;
+-                if (keyGenMech != CKM_RC4_KEY_GEN || minKeySize < 8) {
+-                    minKeySize = Math.multiplyExact(minKeySize, 8);
+-                    if (maxKeySize != Integer.MAX_VALUE) {
+-                        maxKeySize = Math.multiplyExact(maxKeySize, 8);
+-                    }
+-                }
+-                // Explicitly disallow keys shorter than 40-bits for security
+-                if (minKeySize < 40) minKeySize = 40;
+-                if (keySize < minKeySize || keySize > maxKeySize) {
++                if (range != null && keySize < range.iMinKeySize
++                    || keySize > range.iMaxKeySize) {
+                     throw new InvalidAlgorithmParameterException
+-                            ("Key length must be between " + minKeySize +
+-                            " and " + maxKeySize + " bits");
++                        ("Key length must be between " + range.iMinKeySize +
++                        " and " + range.iMaxKeySize + " bits");
+                 }
+                 if (keyGenMech == CKM_AES_KEY_GEN) {
+                     if ((keySize != 128) && (keySize != 192) &&
+                         (keySize != 256)) {
+                         throw new InvalidAlgorithmParameterException
+-                                ("AES key length must be " + minKeySize +
+-                                (maxKeySize >= 192? ", 192":"") +
+-                                (maxKeySize >= 256? ", or 256":"") + " bits");
++                            ("AES key length must be 128, 192, or 256 bits");
+                     }
+                 }
+                 sigKeySize = keySize;
+@@ -148,6 +171,20 @@ final class P11KeyGenerator extends KeyGeneratorSpi {
+         return sigKeySize;
+     }
+ 
++    // check the supplied keysize (in bits) and adjust it based on the given
++    // range
++    private static int adjustKeySize(int ks, CK_MECHANISM_INFO mi) {
++        // adjust to fit within the supported range
++        if (mi != null) {
++            if (ks < mi.iMinKeySize) {
++                ks = mi.iMinKeySize;
++            } else if (ks > mi.iMaxKeySize) {
++                ks = mi.iMaxKeySize;
++            }
++        }
++        return ks;
++    }
++
+     P11KeyGenerator(Token token, String algorithm, long mechanism)
+             throws PKCS11Exception {
+         super();
+@@ -164,54 +201,140 @@ final class P11KeyGenerator extends KeyGeneratorSpi {
+                 (token.provider.config.isEnabled(CKM_DES2_KEY_GEN) &&
+                  (token.getMechanismInfo(CKM_DES2_KEY_GEN) != null));
+         }
+-        setDefaultKeySize();
++        this.range = getSupportedRange(token, mechanism);
++        setDefault();
+     }
+ 
+-    // set default keysize and also initialize keyType
+-    private void setDefaultKeySize() {
++    // set default keysize and keyType
++    private void setDefault() {
++        significantKeySize = -1;
+         switch ((int)mechanism) {
+         case (int)CKM_DES_KEY_GEN:
+             keySize = 64;
+             keyType = CKK_DES;
++            significantKeySize = 56;
+             break;
+         case (int)CKM_DES2_KEY_GEN:
+             keySize = 128;
+             keyType = CKK_DES2;
++            significantKeySize = 112;
+             break;
+         case (int)CKM_DES3_KEY_GEN:
+             keySize = 192;
+             keyType = CKK_DES3;
++            significantKeySize = 168;
+             break;
+         case (int)CKM_AES_KEY_GEN:
+-            keySize = 128;
++            keySize = adjustKeySize(128, range);
+             keyType = CKK_AES;
+             break;
+         case (int)CKM_RC4_KEY_GEN:
+-            keySize = 128;
++            keySize = adjustKeySize(128, range);
+             keyType = CKK_RC4;
+             break;
+         case (int)CKM_BLOWFISH_KEY_GEN:
+-            keySize = 128;
++            keySize = adjustKeySize(128, range);
+             keyType = CKK_BLOWFISH;
+             break;
+         case (int)CKM_CHACHA20_KEY_GEN:
+             keySize = 256;
+             keyType = CKK_CHACHA20;
+             break;
++        case (int)CKM_SHA_1_KEY_GEN:
++            keySize = adjustKeySize(160, range);
++            keyType = CKK_SHA_1_HMAC;
++            break;
++        case (int)CKM_SHA224_KEY_GEN:
++            keySize = adjustKeySize(224, range);
++            keyType = CKK_SHA224_HMAC;
++            break;
++        case (int)CKM_SHA256_KEY_GEN:
++            keySize = adjustKeySize(256, range);
++            keyType = CKK_SHA256_HMAC;
++            break;
++        case (int)CKM_SHA384_KEY_GEN:
++            keySize = adjustKeySize(384, range);
++            keyType = CKK_SHA384_HMAC;
++            break;
++        case (int)CKM_SHA512_KEY_GEN:
++            keySize = adjustKeySize(512, range);
++            keyType = CKK_SHA512_HMAC;
++            break;
++        case (int)CKM_SHA512_224_KEY_GEN:
++            keySize = adjustKeySize(224, range);
++            keyType = CKK_SHA512_224_HMAC;
++            break;
++        case (int)CKM_SHA512_256_KEY_GEN:
++            keySize = adjustKeySize(256, range);
++            keyType = CKK_SHA512_256_HMAC;
++            break;
++        case (int)CKM_SHA3_224_KEY_GEN:
++            keySize = adjustKeySize(224, range);
++            keyType = CKK_SHA3_224_HMAC;
++            break;
++        case (int)CKM_SHA3_256_KEY_GEN:
++            keySize = adjustKeySize(256, range);
++            keyType = CKK_SHA3_256_HMAC;
++            break;
++        case (int)CKM_SHA3_384_KEY_GEN:
++            keySize = adjustKeySize(384, range);
++            keyType = CKK_SHA3_384_HMAC;
++            break;
++        case (int)CKM_SHA3_512_KEY_GEN:
++            keySize = adjustKeySize(512, range);
++            keyType = CKK_SHA3_512_HMAC;
++            break;
++        case (int)CKM_GENERIC_SECRET_KEY_GEN:
++            if (algorithm.startsWith("Hmac")) {
++                String digest = algorithm.substring(4);
++                switch (digest) {
++                    case "MD5":
++                        keySize = 512;
++                        break;
++                    case "SHA1":
++                        keySize = 160;
++                        break;
++                    case "SHA224":
++                    case "SHA512/224":
++                    case "SHA3-224":
++                        keySize = 224;
++                        break;
++                    case "SHA256":
++                    case "SHA512/256":
++                    case "SHA3-256":
++                        keySize = 256;
++                        break;
++                    case "SHA384":
++                    case "SHA3-384":
++                        keySize = 384;
++                        break;
++                    case "SHA512":
++                    case "SHA3-512":
++                        keySize = 512;
++                        break;
++                    default:
++                        throw new ProviderException("Unsupported algorithm " +
++                            algorithm);
++                }
++                keySize = adjustKeySize(keySize, range);
++            } else {
++                throw new ProviderException("Unsupported algorithm " +
++                        algorithm);
++            }
++            keyType = CKK_GENERIC_SECRET;
++            break;
+         default:
+             throw new ProviderException("Unknown mechanism " + mechanism);
+         }
+-        try {
+-            significantKeySize = checkKeySize(mechanism, keySize, token);
+-        } catch (InvalidAlgorithmParameterException iape) {
+-            throw new ProviderException("Unsupported default key size", iape);
++        if (significantKeySize == -1) {
++            significantKeySize = keySize;
+         }
+     }
+ 
+     // see JCE spec
+     protected void engineInit(SecureRandom random) {
+         token.ensureValid();
+-        setDefaultKeySize();
++        setDefault();
+     }
+ 
+     // see JCE spec
+@@ -226,7 +349,7 @@ final class P11KeyGenerator extends KeyGeneratorSpi {
+         token.ensureValid();
+         int newSignificantKeySize;
+         try {
+-            newSignificantKeySize = checkKeySize(mechanism, keySize, token);
++            newSignificantKeySize = checkKeySize(mechanism, keySize, range);
+         } catch (InvalidAlgorithmParameterException iape) {
+             throw (InvalidParameterException)
+                     (new InvalidParameterException().initCause(iape));
+@@ -258,10 +381,11 @@ final class P11KeyGenerator extends KeyGeneratorSpi {
+         try {
+             session = token.getObjSession();
+             CK_ATTRIBUTE[] attributes;
+-            switch ((int)keyType) {
+-            case (int)CKK_DES:
+-            case (int)CKK_DES2:
+-            case (int)CKK_DES3:
++
++            switch ((int)mechanism) {
++            case (int)CKM_DES_KEY_GEN:
++            case (int)CKM_DES2_KEY_GEN:
++            case (int)CKM_DES3_KEY_GEN:
+                 // fixed length, do not specify CKA_VALUE_LEN
+                 attributes = new CK_ATTRIBUTE[] {
+                     new CK_ATTRIBUTE(CKA_CLASS, CKO_SECRET_KEY),
+@@ -286,5 +410,4 @@ final class P11KeyGenerator extends KeyGeneratorSpi {
+             token.releaseSession(session);
+         }
+     }
+-
+ }
+diff --git a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Mac.java b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Mac.java
+index c88e4a6ace..29b26651c3 100644
+--- a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Mac.java
++++ b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Mac.java
+@@ -39,8 +39,9 @@ import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
+ 
+ /**
+  * MAC implementation class. This class currently supports HMAC using
+- * MD5, SHA-1, SHA-224, SHA-256, SHA-384, and SHA-512 and the SSL3 MAC
+- * using MD5 and SHA-1.
++ * MD5, SHA-1, SHA-2 family (SHA-224, SHA-256, SHA-384, and SHA-512),
++ * SHA-3 family (SHA3-224, SHA3-256, SHA3-384, and SHA3-512), and the
++ * SSL3 MAC using MD5 and SHA-1.
+  *
+  * Note that unlike other classes (e.g. Signature), this does not
+  * composite various operations if the token only supports part of the
+@@ -92,16 +93,20 @@ final class P11Mac extends MacSpi {
+             break;
+         case (int)CKM_SHA224_HMAC:
+         case (int)CKM_SHA512_224_HMAC:
++        case (int)CKM_SHA3_224_HMAC:
+             macLength = 28;
+             break;
+         case (int)CKM_SHA256_HMAC:
+         case (int)CKM_SHA512_256_HMAC:
++        case (int)CKM_SHA3_256_HMAC:
+             macLength = 32;
+             break;
+         case (int)CKM_SHA384_HMAC:
++        case (int)CKM_SHA3_384_HMAC:
+             macLength = 48;
+             break;
+         case (int)CKM_SHA512_HMAC:
++        case (int)CKM_SHA3_512_HMAC:
+             macLength = 64;
+             break;
+         case (int)CKM_SSL3_MD5_MAC:
+diff --git a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11PSSSignature.java b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11PSSSignature.java
+index 1419be3754..18e00a544b 100644
+--- a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11PSSSignature.java
++++ b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11PSSSignature.java
+@@ -38,6 +38,7 @@ import java.security.spec.MGF1ParameterSpec;
+ import java.security.spec.PSSParameterSpec;
+ import java.security.interfaces.*;
+ import sun.security.pkcs11.wrapper.*;
++import sun.security.util.KnownOIDs;
+ import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
+ 
+ 
+@@ -52,6 +53,10 @@ import static sun.security.pkcs11.wrapper.PKCS11Constants.*;
+  *   . SHA256withRSASSA-PSS
+  *   . SHA384withRSASSA-PSS
+  *   . SHA512withRSASSA-PSS
++ *   . SHA3-224withRSASSA-PSS
++ *   . SHA3-256withRSASSA-PSS
++ *   . SHA3-384withRSASSA-PSS
++ *   . SHA3-512withRSASSA-PSS
+  *
+  * Note that the underlying PKCS#11 token may support complete signature
+  * algorithm (e.g. CKM_<md>_RSA_PKCS_PSS), or it may just
+@@ -71,20 +76,28 @@ final class P11PSSSignature extends SignatureSpi {
+ 
+     static {
+         DIGEST_LENGTHS.put("SHA-1", 20);
+-        DIGEST_LENGTHS.put("SHA", 20);
+-        DIGEST_LENGTHS.put("SHA1", 20);
+         DIGEST_LENGTHS.put("SHA-224", 28);
+-        DIGEST_LENGTHS.put("SHA224", 28);
+         DIGEST_LENGTHS.put("SHA-256", 32);
+-        DIGEST_LENGTHS.put("SHA256", 32);
+         DIGEST_LENGTHS.put("SHA-384", 48);
+-        DIGEST_LENGTHS.put("SHA384", 48);
+         DIGEST_LENGTHS.put("SHA-512", 64);
+-        DIGEST_LENGTHS.put("SHA512", 64);
+         DIGEST_LENGTHS.put("SHA-512/224", 28);
+-        DIGEST_LENGTHS.put("SHA512/224", 28);
+         DIGEST_LENGTHS.put("SHA-512/256", 32);
+-        DIGEST_LENGTHS.put("SHA512/256", 32);
++        DIGEST_LENGTHS.put("SHA3-224", 28);
++        DIGEST_LENGTHS.put("SHA3-256", 32);
++        DIGEST_LENGTHS.put("SHA3-384", 48);
++        DIGEST_LENGTHS.put("SHA3-512", 64);
++    }
++
++    // utility method for looking up the std digest algorithms
++    private static String toStdName(String givenDigestAlg) {
++        if (givenDigestAlg == null) return null;
++
++        KnownOIDs given2 = KnownOIDs.findMatch(givenDigestAlg);
++        if (given2 == null) {
++            return givenDigestAlg;
++        } else {
++            return given2.stdName();
++        }
+     }
+ 
+     // utility method for comparing digest algorithms
+@@ -92,24 +105,8 @@ final class P11PSSSignature extends SignatureSpi {
+     private static boolean isDigestEqual(String stdAlg, String givenAlg) {
+         if (stdAlg == null || givenAlg == null) return false;
+ 
+-        if (givenAlg.indexOf("-") != -1) {
+-            return stdAlg.equalsIgnoreCase(givenAlg);
+-        } else {
+-            if (stdAlg.equals("SHA-1")) {
+-                return (givenAlg.equalsIgnoreCase("SHA")
+-                        || givenAlg.equalsIgnoreCase("SHA1"));
+-            } else {
+-                StringBuilder sb = new StringBuilder(givenAlg);
+-                // case-insensitive check
+-                if (givenAlg.regionMatches(true, 0, "SHA", 0, 3)) {
+-                    givenAlg = sb.insert(3, "-").toString();
+-                    return stdAlg.equalsIgnoreCase(givenAlg);
+-                } else {
+-                    throw new ProviderException("Unsupported digest algorithm "
+-                            + givenAlg);
+-                }
+-            }
+-        }
++        givenAlg = toStdName(givenAlg);
++        return stdAlg.equalsIgnoreCase(givenAlg);
+     }
+ 
+     // token instance
+@@ -172,26 +169,57 @@ final class P11PSSSignature extends SignatureSpi {
+         this.algorithm = algorithm;
+         this.mechanism = new CK_MECHANISM(mechId);
+         int idx = algorithm.indexOf("with");
+-        this.mdAlg = (idx == -1? null : algorithm.substring(0, idx));
++        // convert to stdName
++        this.mdAlg = (idx == -1?
++                null : toStdName(algorithm.substring(0, idx)));
++
+         switch ((int)mechId) {
+         case (int)CKM_SHA1_RSA_PKCS_PSS:
+         case (int)CKM_SHA224_RSA_PKCS_PSS:
+         case (int)CKM_SHA256_RSA_PKCS_PSS:
+         case (int)CKM_SHA384_RSA_PKCS_PSS:
+         case (int)CKM_SHA512_RSA_PKCS_PSS:
++        case (int)CKM_SHA3_224_RSA_PKCS_PSS:
++        case (int)CKM_SHA3_256_RSA_PKCS_PSS:
++        case (int)CKM_SHA3_384_RSA_PKCS_PSS:
++        case (int)CKM_SHA3_512_RSA_PKCS_PSS:
+             type = T_UPDATE;
++            this.md = null;
+             break;
+         case (int)CKM_RSA_PKCS_PSS:
++            // check if the digest algo is supported by underlying PKCS11 lib
++            if (this.mdAlg != null && token.getMechanismInfo
++                    (Functions.getHashMechId(this.mdAlg)) == null) {
++                throw new NoSuchAlgorithmException("Unsupported algorithm: " +
++                        algorithm);
++            }
++            this.md = (this.mdAlg == null? null :
++                    MessageDigest.getInstance(this.mdAlg));
+             type = T_DIGEST;
+             break;
+         default:
+             throw new ProviderException("Unsupported mechanism: " + mechId);
+         }
+-        this.md = null;
++    }
++
++    private static PSSParameterSpec genDefaultParams(String digestAlg,
++            P11Key key) throws SignatureException {
++        int mdLen;
++        try {
++            mdLen = DIGEST_LENGTHS.get(digestAlg);
++        } catch (NullPointerException npe) {
++            throw new SignatureException("Unsupported digest: " +
++                    digestAlg);
++        }
++        int saltLen = Integer.min(mdLen, (key.length() >> 3) - mdLen -2);
++        return new PSSParameterSpec(digestAlg,
++                "MGF1", new MGF1ParameterSpec(digestAlg),
++                saltLen, PSSParameterSpec.TRAILER_FIELD_BC);
+     }
+ 
+     private void ensureInitialized() throws SignatureException {
+         token.ensureValid();
++
+         if (this.p11Key == null) {
+             throw new SignatureException("Missing key");
+         }
+@@ -200,20 +228,19 @@ final class P11PSSSignature extends SignatureSpi {
+                 // PSS Parameters are required for signature verification
+                 throw new SignatureException
+                     ("Parameters required for RSASSA-PSS signature");
+-            } else {
+-                int saltLen = DIGEST_LENGTHS.get(this.mdAlg).intValue();
+-                // generate default params for both sign and verify?
+-                this.sigParams = new PSSParameterSpec(this.mdAlg,
+-                        "MGF1", new MGF1ParameterSpec(this.mdAlg),
+-                        saltLen, PSSParameterSpec.TRAILER_FIELD_BC);
+-                this.mechanism.setParameter(new CK_RSA_PKCS_PSS_PARAMS(
+-                        this.mdAlg, "MGF1", this.mdAlg,
+-                        DIGEST_LENGTHS.get(this.mdAlg).intValue()));
+             }
++            // generate default params for both sign and verify?
++            this.sigParams = genDefaultParams(this.mdAlg, this.p11Key);
++            this.mechanism.setParameter(new CK_RSA_PKCS_PSS_PARAMS(
++                    this.mdAlg, "MGF1", this.mdAlg, sigParams.getSaltLength()));
+         }
+ 
+         if (initialized == false) {
+-            initialize();
++            try {
++                initialize();
++            } catch (ProviderException pe) {
++                throw new SignatureException(pe);
++            }
+         }
+     }
+ 
+@@ -286,7 +313,7 @@ final class P11PSSSignature extends SignatureSpi {
+     }
+ 
+     // assumes current state is initialized == false
+-    private void initialize() {
++    private void initialize() throws ProviderException {
+         if (DEBUG) System.out.println("Initializing");
+ 
+         if (p11Key == null) {
+@@ -363,7 +390,8 @@ final class P11PSSSignature extends SignatureSpi {
+         if (this.sigParams != null) {
+             String digestAlg = this.sigParams.getDigestAlgorithm();
+             int sLen = this.sigParams.getSaltLength();
+-            int hLen = DIGEST_LENGTHS.get(digestAlg).intValue();
++
++            int hLen = DIGEST_LENGTHS.get(toStdName(digestAlg)).intValue();
+             int minKeyLen = Math.addExact(Math.addExact(sLen, hLen), 2);
+ 
+             if (keySize < minKeyLen) {
+@@ -387,12 +415,24 @@ final class P11PSSSignature extends SignatureSpi {
+         if (params == this.sigParams) return;
+ 
+         String digestAlgorithm = params.getDigestAlgorithm();
+-        if (this.mdAlg != null && !isDigestEqual(digestAlgorithm, this.mdAlg)) {
++        if (this.mdAlg != null && !isDigestEqual(this.mdAlg, digestAlgorithm)) {
+             throw new InvalidAlgorithmParameterException
+                     ("Digest algorithm in Signature parameters must be " +
+                      this.mdAlg);
+         }
+-        Integer digestLen = DIGEST_LENGTHS.get(digestAlgorithm);
++
++        try {
++            if (token.getMechanismInfo(Functions.getHashMechId
++                    (digestAlgorithm)) == null) {
++                throw new InvalidAlgorithmParameterException
++                        ("Unsupported digest algorithm: " + digestAlgorithm);
++            }
++        } catch (PKCS11Exception pe) {
++            // should not happen
++            throw new InvalidAlgorithmParameterException(pe);
++        }
++
++        Integer digestLen = DIGEST_LENGTHS.get(toStdName(digestAlgorithm));
+         if (digestLen == null) {
+             throw new InvalidAlgorithmParameterException
+                 ("Unsupported digest algorithm in Signature parameters: " +
+@@ -465,8 +505,14 @@ final class P11PSSSignature extends SignatureSpi {
+         mode = M_VERIFY;
+         p11Key = P11KeyFactory.convertKey(token, publicKey, KEY_ALGO);
+ 
+-        // For PSS, defer PKCS11 initialization calls to update/doFinal as it
+-        // needs both key and params
++        // attempt initialization when key and params are both available
++        if (this.p11Key != null && this.sigParams != null) {
++            try {
++                initialize();
++            } catch (ProviderException pe) {
++                throw new InvalidKeyException(pe);
++            }
++        }
+     }
+ 
+     // see JCA spec
+@@ -487,8 +533,14 @@ final class P11PSSSignature extends SignatureSpi {
+         mode = M_SIGN;
+         p11Key = P11KeyFactory.convertKey(token, privateKey, KEY_ALGO);
+ 
+-        // For PSS, defer PKCS11 initialization calls to update/doFinal as it
+-        // needs both key and params
++        // attempt initialization when key and params are both available
++        if (this.p11Key != null && this.sigParams != null) {
++            try {
++                initialize();
++            } catch (ProviderException pe) {
++                throw new InvalidKeyException(pe);
++            }
++        }
+     }
+ 
+     // see JCA spec
+@@ -698,6 +750,15 @@ final class P11PSSSignature extends SignatureSpi {
+                 throw new InvalidAlgorithmParameterException(nsae);
+             }
+         }
++
++        // attempt initialization when key and params are both available
++        if (this.p11Key != null && this.sigParams != null) {
++            try {
++                initialize();
++            } catch (ProviderException pe) {
++                throw new InvalidAlgorithmParameterException(pe);
++            }
++        }
+     }
+ 
+     // see JCA spec
+diff --git a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Signature.java b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Signature.java
+index e3af106d05..e49edf32c2 100644
+--- a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Signature.java
++++ b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/P11Signature.java
+@@ -51,8 +51,15 @@ import sun.security.util.KeyUtil;
+  * . DSA
+  *   . NONEwithDSA (RawDSA)
+  *   . SHA1withDSA
+- *   . NONEwithDSAinP1363Format (RawDSAinP1363Format)
+- *   . SHA1withDSAinP1363Format
++ *   . SHA224withDSA
++ *   . SHA256withDSA
++ *   . SHA384withDSA
++ *   . SHA512withDSA
++ *   . SHA3-224withDSA
++ *   . SHA3-256withDSA
++ *   . SHA3-384withDSA
++ *   . SHA3-512withDSA
++ *   . <any of above>inP1363Format
+  * . RSA:
+  *   . MD2withRSA
+  *   . MD5withRSA
+@@ -61,6 +68,10 @@ import sun.security.util.KeyUtil;
+  *   . SHA256withRSA
+  *   . SHA384withRSA
+  *   . SHA512withRSA
++ *   . SHA3-224withRSA
++ *   . SHA3-256withRSA
++ *   . SHA3-384withRSA
++ *   . SHA3-512withRSA
+  * . ECDSA
+  *   . NONEwithECDSA
+  *   . SHA1withECDSA
+@@ -68,12 +79,11 @@ import sun.security.util.KeyUtil;
+  *   . SHA256withECDSA
+  *   . SHA384withECDSA
+  *   . SHA512withECDSA
+- *   . NONEwithECDSAinP1363Format
+- *   . SHA1withECDSAinP1363Format
+- *   . SHA224withECDSAinP1363Format
+- *   . SHA256withECDSAinP1363Format
+- *   . SHA384withECDSAinP1363Format
+- *   . SHA512withECDSAinP1363Format
++ *   . SHA3_224withECDSA
++ *   . SHA3_256withECDSA
++ *   . SHA3_384withECDSA
++ *   . SHA3_512withECDSA
++ *   . <any of above>inP1363Format
+  *
+  * Note that the underlying PKCS#11 token may support complete signature
+  * algorithm (e.g. CKM_DSA_SHA1, CKM_MD5_RSA_PKCS), or it may just
+@@ -144,10 +154,11 @@ final class P11Signature extends SignatureSpi {
+     // constant for type raw, used with RawDSA and NONEwithECDSA only
+     private final static int T_RAW    = 3;
+ 
+-    // XXX PKCS#11 v2.20 says "should not be longer than 1024 bits",
+-    // but this is a little arbitrary
++    // PKCS#11 spec for CKM_ECDSA states that the length should not be longer
++    // than 1024 bits", but this is a little arbitrary
+     private final static int RAW_ECDSA_MAX = 128;
+ 
++
+     P11Signature(Token token, String algorithm, long mechanism)
+             throws NoSuchAlgorithmException, PKCS11Exception {
+         super();
+@@ -165,16 +176,36 @@ final class P11Signature extends SignatureSpi {
+         case (int)CKM_SHA256_RSA_PKCS:
+         case (int)CKM_SHA384_RSA_PKCS:
+         case (int)CKM_SHA512_RSA_PKCS:
++        case (int)CKM_SHA3_224_RSA_PKCS:
++        case (int)CKM_SHA3_256_RSA_PKCS:
++        case (int)CKM_SHA3_384_RSA_PKCS:
++        case (int)CKM_SHA3_512_RSA_PKCS:
+             keyAlgorithm = "RSA";
+             type = T_UPDATE;
+             buffer = new byte[1];
+             break;
+         case (int)CKM_DSA_SHA1:
++        case (int)CKM_DSA_SHA224:
++        case (int)CKM_DSA_SHA256:
++        case (int)CKM_DSA_SHA384:
++        case (int)CKM_DSA_SHA512:
++        case (int)CKM_DSA_SHA3_224:
++        case (int)CKM_DSA_SHA3_256:
++        case (int)CKM_DSA_SHA3_384:
++        case (int)CKM_DSA_SHA3_512:
+             keyAlgorithm = "DSA";
+             type = T_UPDATE;
+             buffer = new byte[1];
+             break;
+         case (int)CKM_ECDSA_SHA1:
++        case (int)CKM_ECDSA_SHA224:
++        case (int)CKM_ECDSA_SHA256:
++        case (int)CKM_ECDSA_SHA384:
++        case (int)CKM_ECDSA_SHA512:
++        case (int)CKM_ECDSA_SHA3_224:
++        case (int)CKM_ECDSA_SHA3_256:
++        case (int)CKM_ECDSA_SHA3_384:
++        case (int)CKM_ECDSA_SHA3_512:
+             keyAlgorithm = "EC";
+             type = T_UPDATE;
+             buffer = new byte[1];
+@@ -200,57 +231,18 @@ final class P11Signature extends SignatureSpi {
+                 type = T_RAW;
+                 buffer = new byte[RAW_ECDSA_MAX];
+             } else {
+-                String digestAlg;
+-                if (algorithm.equals("SHA1withECDSA") ||
+-                    algorithm.equals("SHA1withECDSAinP1363Format")) {
+-                    digestAlg = "SHA-1";
+-                } else if (algorithm.equals("SHA224withECDSA") ||
+-                           algorithm.equals("SHA224withECDSAinP1363Format")) {
+-                    digestAlg = "SHA-224";
+-                } else if (algorithm.equals("SHA256withECDSA") ||
+-                           algorithm.equals("SHA256withECDSAinP1363Format")) {
+-                    digestAlg = "SHA-256";
+-                } else if (algorithm.equals("SHA384withECDSA") ||
+-                           algorithm.equals("SHA384withECDSAinP1363Format")) {
+-                    digestAlg = "SHA-384";
+-                } else if (algorithm.equals("SHA512withECDSA") ||
+-                           algorithm.equals("SHA512withECDSAinP1363Format")) {
+-                    digestAlg = "SHA-512";
+-                } else {
+-                    throw new ProviderException(algorithm);
+-                }
+                 type = T_DIGEST;
+-                md = MessageDigest.getInstance(digestAlg);
++                md = MessageDigest.getInstance
++                        (getDigestEnum(algorithm).stdName());
+             }
+             break;
+         case (int)CKM_RSA_PKCS:
+         case (int)CKM_RSA_X_509:
+             keyAlgorithm = "RSA";
+             type = T_DIGEST;
+-            if (algorithm.equals("MD5withRSA")) {
+-                md = MessageDigest.getInstance("MD5");
+-                digestOID = AlgorithmId.MD5_oid;
+-            } else if (algorithm.equals("SHA1withRSA")) {
+-                md = MessageDigest.getInstance("SHA-1");
+-                digestOID = AlgorithmId.SHA_oid;
+-            } else if (algorithm.equals("MD2withRSA")) {
+-                md = MessageDigest.getInstance("MD2");
+-                digestOID = AlgorithmId.MD2_oid;
+-            } else if (algorithm.equals("SHA224withRSA")) {
+-                md = MessageDigest.getInstance("SHA-224");
+-                digestOID = AlgorithmId.SHA224_oid;
+-            } else if (algorithm.equals("SHA256withRSA")) {
+-                md = MessageDigest.getInstance("SHA-256");
+-                digestOID = AlgorithmId.SHA256_oid;
+-            } else if (algorithm.equals("SHA384withRSA")) {
+-                md = MessageDigest.getInstance("SHA-384");
+-                digestOID = AlgorithmId.SHA384_oid;
+-            } else if (algorithm.equals("SHA512withRSA")) {
+-                md = MessageDigest.getInstance("SHA-512");
+-                digestOID = AlgorithmId.SHA512_oid;
+-            } else {
+-                throw new ProviderException("Unknown signature: " + algorithm);
+-            }
++            KnownOIDs digestAlg = getDigestEnum(algorithm);
++            md = MessageDigest.getInstance(digestAlg.stdName());
++            digestOID = ObjectIdentifier.of(digestAlg);
+             break;
+         default:
+             throw new ProviderException("Unknown mechanism: " + mechanism);
+@@ -304,8 +296,8 @@ final class P11Signature extends SignatureSpi {
+                 }
+             } else { // M_VERIFY
+                 byte[] signature;
+-                if (keyAlgorithm.equals("DSA")) {
+-                    signature = new byte[40];
++                if (mechanism == CKM_DSA) {
++                    signature = new byte[64]; // assume N = 256
+                 } else {
+                     signature = new byte[(p11Key.length() + 7) >> 3];
+                 }
+@@ -449,13 +441,17 @@ final class P11Signature extends SignatureSpi {
+             encodedLength = 34;
+         } else if (algorithm.equals("SHA1withRSA")) {
+             encodedLength = 35;
+-        } else if (algorithm.equals("SHA224withRSA")) {
++        } else if (algorithm.equals("SHA224withRSA") ||
++		   algorithm.equals("SHA3-224withRSA")) {
+             encodedLength = 47;
+-        } else if (algorithm.equals("SHA256withRSA")) {
++        } else if (algorithm.equals("SHA256withRSA") ||
++		   algorithm.equals("SHA3-256withRSA")) {
+             encodedLength = 51;
+-        } else if (algorithm.equals("SHA384withRSA")) {
++        } else if (algorithm.equals("SHA384withRSA") ||
++		   algorithm.equals("SHA3-384withRSA")) {
+             encodedLength = 67;
+-        } else if (algorithm.equals("SHA512withRSA")) {
++        } else if (algorithm.equals("SHA512withRSA") ||
++		   algorithm.equals("SHA3-512withRSA")) {
+             encodedLength = 83;
+         } else {
+             throw new ProviderException("Unknown signature algo: " + algorithm);
+@@ -631,8 +627,7 @@ final class P11Signature extends SignatureSpi {
+         try {
+             byte[] signature;
+             if (type == T_UPDATE) {
+-                int len = keyAlgorithm.equals("DSA") ? 40 : 0;
+-                signature = token.p11.C_SignFinal(session.id(), len);
++                signature = token.p11.C_SignFinal(session.id(), 0);
+             } else {
+                 byte[] digest;
+                 if (type == T_DIGEST) {
+@@ -781,6 +776,23 @@ final class P11Signature extends SignatureSpi {
+         }
+     }
+ 
++    private static KnownOIDs getDigestEnum(String algorithm)
++            throws NoSuchAlgorithmException {
++        try {
++            String digAlg = SignatureUtil.extractDigestAlgFromDwithE(algorithm);
++            KnownOIDs k = KnownOIDs.findMatch(digAlg);
++            if (k == null) {
++                throw new NoSuchAlgorithmException
++                        ("Unsupported digest algorithm: " + digAlg);
++            }
++            return k;
++        } catch (IllegalArgumentException iae) {
++            // should never happen
++            throw new NoSuchAlgorithmException("Unknown signature: " +
++                    algorithm, iae);
++        }
++    }
++
+ //    private static byte[] decodeSignature(byte[] signature) throws IOException {
+ //      return RSASignature.decodeSignature(digestOID, signature);
+ //    }
+diff --git a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/SunPKCS11.java b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/SunPKCS11.java
+index ffbd671246..d191831dab 100644
+--- a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/SunPKCS11.java
++++ b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/SunPKCS11.java
+@@ -546,6 +546,14 @@ public final class SunPKCS11 extends AuthProvider {
+                 m(CKM_SHA512_224));
+         dA(MD, "SHA-512/256",        P11Digest,
+                 m(CKM_SHA512_256));
++        dA(MD, "SHA3-224",        P11Digest,
++                m(CKM_SHA3_224));
++        dA(MD, "SHA3-256",        P11Digest,
++                m(CKM_SHA3_256));
++        dA(MD, "SHA3-384",        P11Digest,
++                m(CKM_SHA3_384));
++        dA(MD, "SHA3-512",        P11Digest,
++                m(CKM_SHA3_512));
+ 
+         d(MAC, "HmacMD5",       P11MAC,
+                 m(CKM_MD5_HMAC));
+@@ -563,7 +571,14 @@ public final class SunPKCS11 extends AuthProvider {
+                 m(CKM_SHA512_224_HMAC));
+         dA(MAC, "HmacSHA512/256",    P11MAC,
+                 m(CKM_SHA512_256_HMAC));
+-
++        dA(MAC, "HmacSHA3-224",    P11MAC,
++                m(CKM_SHA3_224_HMAC));
++        dA(MAC, "HmacSHA3-256",    P11MAC,
++                m(CKM_SHA3_256_HMAC));
++        dA(MAC, "HmacSHA3-384",    P11MAC,
++                m(CKM_SHA3_384_HMAC));
++        dA(MAC, "HmacSHA3-512",    P11MAC,
++                m(CKM_SHA3_512_HMAC));
+         d(MAC, "SslMacMD5",     P11MAC,
+                 m(CKM_SSL3_MD5_MAC));
+         d(MAC, "SslMacSHA1",    P11MAC,
+@@ -595,6 +610,30 @@ public final class SunPKCS11 extends AuthProvider {
+                 m(CKM_BLOWFISH_KEY_GEN));
+         d(KG,  "ChaCha20",      P11KeyGenerator,
+                 m(CKM_CHACHA20_KEY_GEN));
++        d(KG,  "HmacMD5",      P11KeyGenerator, // 1.3.6.1.5.5.8.1.1
++                m(CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA1",      P11KeyGenerator,
++                m(CKM_SHA_1_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA224",    P11KeyGenerator,
++                m(CKM_SHA224_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA256",    P11KeyGenerator,
++                m(CKM_SHA256_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA384",    P11KeyGenerator,
++                m(CKM_SHA384_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA512",    P11KeyGenerator,
++                m(CKM_SHA512_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA512/224",    P11KeyGenerator,
++                m(CKM_SHA512_224_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA512/256",    P11KeyGenerator,
++                m(CKM_SHA512_256_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA3-224",    P11KeyGenerator,
++                m(CKM_SHA3_224_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA3-256",    P11KeyGenerator,
++                m(CKM_SHA3_256_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA3-384",    P11KeyGenerator,
++                m(CKM_SHA3_384_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
++        dA(KG,  "HmacSHA3-512",    P11KeyGenerator,
++                m(CKM_SHA3_512_KEY_GEN, CKM_GENERIC_SECRET_KEY_GEN));
+ 
+         // register (Secret)KeyFactories if there are any mechanisms
+         // for a particular algorithm that we support
+@@ -725,37 +764,77 @@ public final class SunPKCS11 extends AuthProvider {
+                 m(CKM_DSA_SHA384));
+         dA(SIG, "SHA512withDSA", P11Signature,
+                 m(CKM_DSA_SHA512));
++        dA(SIG, "SHA3-224withDSA", P11Signature,
++                m(CKM_DSA_SHA3_224));
++        dA(SIG, "SHA3-256withDSA", P11Signature,
++                m(CKM_DSA_SHA3_256));
++        dA(SIG, "SHA3-384withDSA", P11Signature,
++                m(CKM_DSA_SHA3_384));
++        dA(SIG, "SHA3-512withDSA", P11Signature,
++                m(CKM_DSA_SHA3_512));
+         d(SIG, "RawDSAinP1363Format",   P11Signature,
+                 List.of("NONEwithDSAinP1363Format"),
+                 m(CKM_DSA));
+         d(SIG, "DSAinP1363Format",      P11Signature,
+                 List.of("SHA1withDSAinP1363Format"),
+                 m(CKM_DSA_SHA1, CKM_DSA));
+-
++        d(SIG, "SHA224withDSAinP1363Format",      P11Signature,
++                m(CKM_DSA_SHA224));
++        d(SIG, "SHA256withDSAinP1363Format",      P11Signature,
++                m(CKM_DSA_SHA256));
++        d(SIG, "SHA384withDSAinP1363Format",      P11Signature,
++                m(CKM_DSA_SHA384));
++        d(SIG, "SHA512withDSAinP1363Format",      P11Signature,
++                m(CKM_DSA_SHA512));
++        d(SIG, "SHA3-224withDSAinP1363Format",      P11Signature,
++                m(CKM_DSA_SHA3_224));
++        d(SIG, "SHA3-256withDSAinP1363Format",      P11Signature,
++                m(CKM_DSA_SHA3_256));
++        d(SIG, "SHA3-384withDSAinP1363Format",      P11Signature,
++                m(CKM_DSA_SHA3_384));
++        d(SIG, "SHA3-512withDSAinP1363Format",      P11Signature,
++                m(CKM_DSA_SHA3_512));
+         d(SIG, "NONEwithECDSA", P11Signature,
+                 m(CKM_ECDSA));
+         dA(SIG, "SHA1withECDSA", P11Signature,
+                 m(CKM_ECDSA_SHA1, CKM_ECDSA));
+         dA(SIG, "SHA224withECDSA",       P11Signature,
+-                m(CKM_ECDSA));
++                m(CKM_ECDSA_SHA224, CKM_ECDSA));
+         dA(SIG, "SHA256withECDSA",       P11Signature,
+-                m(CKM_ECDSA));
++                m(CKM_ECDSA_SHA256, CKM_ECDSA));
+         dA(SIG, "SHA384withECDSA",       P11Signature,
+-                m(CKM_ECDSA));
++                m(CKM_ECDSA_SHA384, CKM_ECDSA));
+         dA(SIG, "SHA512withECDSA",       P11Signature,
+-                m(CKM_ECDSA));
++                m(CKM_ECDSA_SHA512, CKM_ECDSA));
++        dA(SIG, "SHA3-224withECDSA",       P11Signature,
++                m(CKM_ECDSA_SHA3_224, CKM_ECDSA));
++        dA(SIG, "SHA3-256withECDSA",       P11Signature,
++                m(CKM_ECDSA_SHA3_256, CKM_ECDSA));
++        dA(SIG, "SHA3-384withECDSA",       P11Signature,
++                m(CKM_ECDSA_SHA3_384, CKM_ECDSA));
++        dA(SIG, "SHA3-512withECDSA",       P11Signature,
++                m(CKM_ECDSA_SHA3_512, CKM_ECDSA));
+         d(SIG, "NONEwithECDSAinP1363Format",   P11Signature,
+                 m(CKM_ECDSA));
+         d(SIG, "SHA1withECDSAinP1363Format",   P11Signature,
+                 m(CKM_ECDSA_SHA1, CKM_ECDSA));
+         d(SIG, "SHA224withECDSAinP1363Format", P11Signature,
+-                m(CKM_ECDSA));
++                m(CKM_ECDSA_SHA224, CKM_ECDSA));
+         d(SIG, "SHA256withECDSAinP1363Format", P11Signature,
+-                m(CKM_ECDSA));
++                m(CKM_ECDSA_SHA256, CKM_ECDSA));
+         d(SIG, "SHA384withECDSAinP1363Format", P11Signature,
+-                m(CKM_ECDSA));
++                m(CKM_ECDSA_SHA384, CKM_ECDSA));
+         d(SIG, "SHA512withECDSAinP1363Format", P11Signature,
+-                m(CKM_ECDSA));
++                m(CKM_ECDSA_SHA512, CKM_ECDSA));
++        d(SIG, "SHA3-224withECDSAinP1363Format", P11Signature,
++                m(CKM_ECDSA_SHA3_224, CKM_ECDSA));
++        d(SIG, "SHA3-256withECDSAinP1363Format", P11Signature,
++                m(CKM_ECDSA_SHA3_256, CKM_ECDSA));
++        d(SIG, "SHA3-384withECDSAinP1363Format", P11Signature,
++                m(CKM_ECDSA_SHA3_384, CKM_ECDSA));
++        d(SIG, "SHA3-512withECDSAinP1363Format", P11Signature,
++                m(CKM_ECDSA_SHA3_512, CKM_ECDSA));
++
+         dA(SIG, "MD2withRSA",    P11Signature,
+                 m(CKM_MD2_RSA_PKCS, CKM_RSA_PKCS, CKM_RSA_X_509));
+         dA(SIG, "MD5withRSA",    P11Signature,
+@@ -770,6 +849,14 @@ public final class SunPKCS11 extends AuthProvider {
+                 m(CKM_SHA384_RSA_PKCS, CKM_RSA_PKCS, CKM_RSA_X_509));
+         dA(SIG, "SHA512withRSA", P11Signature,
+                 m(CKM_SHA512_RSA_PKCS, CKM_RSA_PKCS, CKM_RSA_X_509));
++        dA(SIG, "SHA3-224withRSA", P11Signature,
++                m(CKM_SHA3_224_RSA_PKCS, CKM_RSA_PKCS, CKM_RSA_X_509));
++        dA(SIG, "SHA3-256withRSA", P11Signature,
++                m(CKM_SHA3_256_RSA_PKCS, CKM_RSA_PKCS, CKM_RSA_X_509));
++        dA(SIG, "SHA3-384withRSA", P11Signature,
++                m(CKM_SHA3_384_RSA_PKCS, CKM_RSA_PKCS, CKM_RSA_X_509));
++        dA(SIG, "SHA3-512withRSA", P11Signature,
++                m(CKM_SHA3_512_RSA_PKCS, CKM_RSA_PKCS, CKM_RSA_X_509));
+         dA(SIG, "RSASSA-PSS", P11PSSSignature,
+                 m(CKM_RSA_PKCS_PSS));
+         d(SIG, "SHA1withRSASSA-PSS", P11PSSSignature,
+@@ -782,6 +869,14 @@ public final class SunPKCS11 extends AuthProvider {
+                 m(CKM_SHA384_RSA_PKCS_PSS));
+         d(SIG, "SHA512withRSASSA-PSS", P11PSSSignature,
+                 m(CKM_SHA512_RSA_PKCS_PSS));
++        d(SIG, "SHA3-224withRSASSA-PSS", P11PSSSignature,
++                m(CKM_SHA3_224_RSA_PKCS_PSS));
++        d(SIG, "SHA3-256withRSASSA-PSS", P11PSSSignature,
++                m(CKM_SHA3_256_RSA_PKCS_PSS));
++        d(SIG, "SHA3-384withRSASSA-PSS", P11PSSSignature,
++                m(CKM_SHA3_384_RSA_PKCS_PSS));
++        d(SIG, "SHA3-512withRSASSA-PSS", P11PSSSignature,
++                m(CKM_SHA3_512_RSA_PKCS_PSS));
+ 
+         d(KG, "SunTlsRsaPremasterSecret",
+                     "sun.security.pkcs11.P11TlsRsaPremasterSecretGenerator",
+diff --git a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/wrapper/CK_RSA_PKCS_PSS_PARAMS.java b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/wrapper/CK_RSA_PKCS_PSS_PARAMS.java
+index e077943bbc..cb04b95304 100644
+--- a/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/wrapper/CK_RSA_PKCS_PSS_PARAMS.java
++++ b/src/jdk.crypto.cryptoki/share/classes/sun/security/pkcs11/wrapper/CK_RSA_PKCS_PSS_PARAMS.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -57,7 +57,12 @@ public class CK_RSA_PKCS_PSS_PARAMS {
+             throw new ProviderException("Only MGF1 is supported");
+         }
+         // no dash in PKCS#11 mechanism names
+-        this.mgf = Functions.getMGFId("CKG_MGF1_" + mgfHash.replaceFirst("-", ""));
++        if (mgfHash.startsWith("SHA3-")) {
++            mgfHash = mgfHash.replaceFirst("-", "_");
++        } else {
++            mgfHash = mgfHash.replaceFirst("-", "");
++        }
++        this.mgf = Functions.getMGFId("CKG_MGF1_" + mgfHash);
+         this.sLen = sLen;
+     }
+ 
+diff --git a/test/jdk/sun/security/pkcs11/KeyGenerator/HmacDefKeySizeTest.java b/test/jdk/sun/security/pkcs11/KeyGenerator/HmacDefKeySizeTest.java
+new file mode 100644
+index 0000000000..d6707028d9
+--- /dev/null
++++ b/test/jdk/sun/security/pkcs11/KeyGenerator/HmacDefKeySizeTest.java
+@@ -0,0 +1,84 @@
++/*
++ * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ * This code is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only, as
++ * published by the Free Software Foundation.
++ *
++ * This code is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++ * version 2 for more details (a copy is included in the LICENSE file that
++ * accompanied this code).
++ *
++ * You should have received a copy of the GNU General Public License version
++ * 2 along with this work; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
++ * or visit www.oracle.com if you need additional information or have any
++ * questions.
++ */
++
++/*
++ * @test
++ * @bug 8242332
++ * @summary Check that PKCS11 Hamc KeyGenerator picks appropriate default size
++ * @library /test/lib ..
++ * @modules jdk.crypto.cryptoki
++ * @run main/othervm HmacDefKeySizeTest
++ * @run main/othervm HmacDefKeySizeTest sm
++ */
++
++import java.security.InvalidKeyException;
++import java.security.NoSuchAlgorithmException;
++import java.security.NoSuchProviderException;
++import java.security.Provider;
++import java.util.List;
++import javax.crypto.KeyGenerator;
++import javax.crypto.SecretKey;
++
++public class HmacDefKeySizeTest extends PKCS11Test {
++
++    /**
++     * Request a KeyGenerator object from PKCS11 provider for Hmac algorithm,
++     * and generate the SecretKey.
++     *
++     * @param args the command line arguments
++     */
++    public static void main(String[] args) throws Exception {
++        main(new HmacDefKeySizeTest(), args);
++    }
++
++    @Override
++    public void main(Provider p) {
++        List<String> algorithms = getSupportedAlgorithms("KeyGenerator",
++                "Hmac", p);
++        boolean success = true;
++
++        for (String alg : algorithms) {
++            System.out.println("Testing " + alg);
++            try {
++                KeyGenerator kg = KeyGenerator.getInstance(alg, p);
++                SecretKey k1 = kg.generateKey();
++                int keysize = k1.getEncoded().length << 3;
++                System.out.println("=> default key size = " + keysize);
++                kg.init(keysize);
++                SecretKey k2 = kg.generateKey();
++                if ((k2.getEncoded().length << 3) != keysize) {
++                    success = false;
++                    System.out.println("keysize check failed");
++                }
++            } catch (Exception e) {
++                System.out.println("Unexpected exception: " + e);
++                e.printStackTrace();
++                success = false;
++            }
++        }
++
++        if (!success) {
++            throw new RuntimeException("One or more tests failed");
++        }
++    }
++}
+diff --git a/test/jdk/sun/security/pkcs11/KeyGenerator/TestKeyGenerator.java b/test/jdk/sun/security/pkcs11/KeyGenerator/TestKeyGenerator.java
+index b61d10beec..78b7d857e8 100644
+--- a/test/jdk/sun/security/pkcs11/KeyGenerator/TestKeyGenerator.java
++++ b/test/jdk/sun/security/pkcs11/KeyGenerator/TestKeyGenerator.java
+@@ -23,7 +23,7 @@
+ 
+ /*
+  * @test
+- * @bug 4917233 6461727 6490213 6720456
++ * @bug 4917233 6461727 6490213 6720456 8242332
+  * @summary test the KeyGenerator
+  * @author Andreas Sterbenz
+  * @library /test/lib ..
+@@ -128,6 +128,18 @@ public class TestKeyGenerator extends PKCS11Test {
+         test("ARCFOUR", 40, p, TestResult.PASS);
+         test("ARCFOUR", 128, p, TestResult.PASS);
+ 
++        String[] HMAC_ALGS = {
++            "HmacSHA1", "HmacSHA224", "HmacSHA256", "HmacSHA384", "HmacSHA512",
++            "HmacSHA512/224", "HmacSHA512/256", "HmacSHA3-224", "HmacSHA3-256",
++            "HmacSHA3-384", "HmacSHA3-512",
++        };
++
++        for (String hmacAlg : HMAC_ALGS) {
++            test(hmacAlg, 0, p, TestResult.FAIL);
++            test(hmacAlg, 128, p, TestResult.PASS);
++            test(hmacAlg, 224, p, TestResult.PASS);
++        }
++
+         if (p.getName().equals("SunPKCS11-Solaris")) {
+             test("ARCFOUR", 1024, p, TestResult.TBD);
+         } else if (p.getName().equals("SunPKCS11-NSS")) {
+diff --git a/test/jdk/sun/security/pkcs11/Mac/MacSameTest.java b/test/jdk/sun/security/pkcs11/Mac/MacSameTest.java
+index 59af327c1f..64c42a6dd0 100644
+--- a/test/jdk/sun/security/pkcs11/Mac/MacSameTest.java
++++ b/test/jdk/sun/security/pkcs11/Mac/MacSameTest.java
+@@ -23,7 +23,7 @@
+ 
+ /*
+  * @test
+- * @bug 8048603
++ * @bug 8048603 8242332
+  * @summary Check if doFinal and update operation result in same Mac
+  * @author Yu-Ching Valerie Peng, Bill Situ, Alexander Fomin
+  * @library /test/lib ..
+@@ -40,13 +40,15 @@ import java.security.Provider;
+ import java.security.SecureRandom;
+ import java.util.List;
+ import javax.crypto.Mac;
++import javax.crypto.KeyGenerator;
++import javax.crypto.SecretKey;
+ import javax.crypto.spec.SecretKeySpec;
+ 
+ public class MacSameTest extends PKCS11Test {
+ 
+     private static final int MESSAGE_SIZE = 25;
+     private static final int OFFSET = 5;
+-    private static final int KEY_SIZE = 70;
++    private static final int KEY_SIZE = 128;
+ 
+     /**
+      * Initialize a message, instantiate a Mac object,
+@@ -67,9 +69,30 @@ public class MacSameTest extends PKCS11Test {
+     public void main(Provider p) {
+         List<String> algorithms = getSupportedAlgorithms("Mac", "Hmac", p);
+         boolean success = true;
++        SecureRandom srdm = new SecureRandom();
++
+         for (String alg : algorithms) {
++            // first try w/ java secret key object
++            byte[] keyVal = new byte[KEY_SIZE];
++            srdm.nextBytes(keyVal);
++            SecretKey skey = new SecretKeySpec(keyVal, alg);
++
++            try {
++                doTest(alg, skey, p);
++            } catch (Exception e) {
++                System.out.println("Unexpected exception: " + e);
++                e.printStackTrace();
++                success = false;
++            }
++
+             try {
+-                doTest(alg, p);
++                KeyGenerator kg = KeyGenerator.getInstance(alg, p);
++                kg.init(KEY_SIZE);
++                skey = kg.generateKey();
++                doTest(alg, skey, p);
++            } catch (NoSuchAlgorithmException nsae) {
++                System.out.println("Skip test using native key for " + alg);
++                continue;
+             } catch (Exception e) {
+                 System.out.println("Unexpected exception: " + e);
+                 e.printStackTrace();
+@@ -82,7 +105,7 @@ public class MacSameTest extends PKCS11Test {
+         }
+     }
+ 
+-    private void doTest(String algo, Provider provider)
++    private void doTest(String algo, SecretKey key, Provider provider)
+             throws NoSuchAlgorithmException, NoSuchProviderException,
+             InvalidKeyException {
+         System.out.println("Test " + algo);
+@@ -108,12 +131,7 @@ public class MacSameTest extends PKCS11Test {
+         byte[] tail = new byte[plain.length - OFFSET];
+         System.arraycopy(plain, OFFSET, tail, 0, tail.length);
+ 
+-        SecureRandom srdm = new SecureRandom();
+-        byte[] keyVal = new byte[KEY_SIZE];
+-        srdm.nextBytes(keyVal);
+-        SecretKeySpec keySpec = new SecretKeySpec(keyVal, "HMAC");
+-
+-        mac.init(keySpec);
++        mac.init(key);
+         byte[] result1 = mac.doFinal(plain);
+ 
+         mac.reset();
+diff --git a/test/jdk/sun/security/pkcs11/Mac/ReinitMac.java b/test/jdk/sun/security/pkcs11/Mac/ReinitMac.java
+index 5cad885984..7e045232e3 100644
+--- a/test/jdk/sun/security/pkcs11/Mac/ReinitMac.java
++++ b/test/jdk/sun/security/pkcs11/Mac/ReinitMac.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2003, 2018, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -23,7 +23,7 @@
+ 
+ /*
+  * @test
+- * @bug 4856966
++ * @bug 4856966 8242332
+  * @summary
+  * @author Andreas Sterbenz
+  * @library /test/lib ..
+@@ -35,6 +35,7 @@
+ 
+ import java.security.Provider;
+ import java.util.Random;
++import java.util.List;
+ import javax.crypto.Mac;
+ import javax.crypto.spec.SecretKeySpec;
+ 
+@@ -46,32 +47,49 @@ public class ReinitMac extends PKCS11Test {
+ 
+     @Override
+     public void main(Provider p) throws Exception {
+-        if (p.getService("Mac", "HmacMD5") == null) {
+-            System.out.println(p + " does not support HmacMD5, skipping");
+-            return;
+-        }
++        List<String> algorithms = getSupportedAlgorithms("Mac", "Hmac", p);
+         Random random = new Random();
+-        byte[] data1 = new byte[10 * 1024];
+-        random.nextBytes(data1);
+-        byte[] keyData = new byte[16];
+-        random.nextBytes(keyData);
+-        SecretKeySpec key = new SecretKeySpec(keyData, "Hmac");
+-        Mac mac = Mac.getInstance("HmacMD5", p);
++        byte[] data = new byte[10 * 1024];
++        random.nextBytes(data);
++        byte[] keyVal = new byte[16];
++        random.nextBytes(keyVal);
++
++        boolean success = true;
++        for (String alg : algorithms) {
++            try {
++                doTest(alg, p, keyVal, data);
++            } catch (Exception e) {
++                System.out.println("Unexpected exception: " + e);
++                e.printStackTrace();
++                success = false;
++            }
++        }
++
++        if (!success) {
++            throw new RuntimeException("Test failed");
++        } else {
++            System.out.println("All tests passed");
++        }
++    }
++
++    private void doTest(String alg, Provider p, byte[] keyVal, byte[] data)
++            throws Exception {
++        System.out.println("Testing " + alg);
++        SecretKeySpec key = new SecretKeySpec(keyVal, alg);
++        Mac mac = Mac.getInstance(alg, p);
+         mac.init(key);
+         mac.init(key);
+-        mac.update(data1);
++        mac.update(data);
+         mac.init(key);
+         mac.doFinal();
+         mac.doFinal();
+-        mac.update(data1);
++        mac.update(data);
+         mac.doFinal();
+         mac.reset();
+         mac.reset();
+         mac.init(key);
+         mac.reset();
+-        mac.update(data1);
++        mac.update(data);
+         mac.reset();
+-
+-        System.out.println("All tests passed");
+     }
+ }
+diff --git a/test/jdk/sun/security/pkcs11/MessageDigest/ByteBuffers.java b/test/jdk/sun/security/pkcs11/MessageDigest/ByteBuffers.java
+index 7ced00630c..a7a72e8ea3 100644
+--- a/test/jdk/sun/security/pkcs11/MessageDigest/ByteBuffers.java
++++ b/test/jdk/sun/security/pkcs11/MessageDigest/ByteBuffers.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2003, 2019, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -23,7 +23,7 @@
+ 
+ /*
+  * @test
+- * @bug 4856966 8080462
++ * @bug 4856966 8080462 8242332
+  * @summary Test the MessageDigest.update(ByteBuffer) method
+  * @author Andreas Sterbenz
+  * @library /test/lib ..
+@@ -36,13 +36,10 @@ import java.nio.ByteBuffer;
+ import java.security.*;
+ import java.util.Arrays;
+ import java.util.Random;
++import java.util.List;
+ 
+ public class ByteBuffers extends PKCS11Test {
+ 
+-    static final String[] ALGS = {
+-        "SHA-224", "SHA-256", "SHA-384", "SHA-512", "SHA-512/224", "SHA-512/256"
+-    };
+-
+     private static Random random = new Random();
+ 
+     public static void main(String[] args) throws Exception {
+@@ -51,6 +48,9 @@ public class ByteBuffers extends PKCS11Test {
+ 
+     @Override
+     public void main(Provider p) throws Exception {
++        List<String> ALGS = getSupportedAlgorithms("MessageDigest",
++                "SHA", p);
++
+         int n = 10 * 1024;
+         byte[] t = new byte[n];
+         random.nextBytes(t);
+@@ -62,13 +62,7 @@ public class ByteBuffers extends PKCS11Test {
+ 
+     private void runTest(Provider p, String alg, byte[] data) throws Exception {
+         System.out.println("Test against " + p.getName() + " and " + alg);
+-        MessageDigest md;
+-        try {
+-            md = MessageDigest.getInstance(alg, p);
+-        } catch (NoSuchAlgorithmException e) {
+-            System.out.println("Skip " + alg + " due to no support");
+-            return;
+-        }
++        MessageDigest md = MessageDigest.getInstance(alg, p);
+ 
+         byte[] d1 = md.digest(data);
+ 
+diff --git a/test/jdk/sun/security/pkcs11/MessageDigest/ReinitDigest.java b/test/jdk/sun/security/pkcs11/MessageDigest/ReinitDigest.java
+index ea7909bc39..268f698276 100644
+--- a/test/jdk/sun/security/pkcs11/MessageDigest/ReinitDigest.java
++++ b/test/jdk/sun/security/pkcs11/MessageDigest/ReinitDigest.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2003, 2018, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -23,7 +23,7 @@
+ 
+ /*
+  * @test
+- * @bug 4856966
++ * @bug 4856966 8242332
+  * @summary
+  * @author Andreas Sterbenz
+  * @library /test/lib ..
+@@ -37,6 +37,7 @@ import java.security.MessageDigest;
+ import java.security.Provider;
+ import java.util.Arrays;
+ import java.util.Random;
++import java.util.List;
+ 
+ public class ReinitDigest extends PKCS11Test {
+ 
+@@ -46,19 +47,37 @@ public class ReinitDigest extends PKCS11Test {
+ 
+     @Override
+     public void main(Provider p) throws Exception {
+-        if (p.getService("MessageDigest", "MD5") == null) {
+-            System.out.println("Provider does not support MD5, skipping");
+-            return;
+-        }
++        List<String> ALGS = getSupportedAlgorithms("MessageDigest",
++                "SHA", p);
+         Random r = new Random();
+         byte[] data1 = new byte[10 * 1024];
+         byte[] data2 = new byte[10 * 1024];
+         r.nextBytes(data1);
+         r.nextBytes(data2);
+-        MessageDigest md;
+-        md = MessageDigest.getInstance("MD5", "SUN");
++
++        boolean success = true;
++        for (String alg : ALGS) {
++            try {
++                doTest(alg, p, data1, data2);
++            } catch (Exception e) {
++                System.out.println("Unexpected exception: " + e);
++                e.printStackTrace();
++                success = false;
++            }
++        }
++
++        if (!success) {
++            throw new RuntimeException("Test failed");
++        }
++        System.out.println("All tests passed");
++    }
++
++    private void doTest(String alg, Provider p, byte[] data1, byte[] data2)
++            throws Exception {
++        System.out.println("Testing " + alg);
++        MessageDigest md = MessageDigest.getInstance(alg, "SUN");
+         byte[] d1 = md.digest(data1);
+-        md = MessageDigest.getInstance("MD5", p);
++        md = MessageDigest.getInstance(alg, p);
+         byte[] d2 = md.digest(data1);
+         check(d1, d2);
+         byte[] d3 = md.digest(data1);
+@@ -68,7 +87,6 @@ public class ReinitDigest extends PKCS11Test {
+         md.reset();
+         byte[] d4 = md.digest(data1);
+         check(d1, d4);
+-        System.out.println("All tests passed");
+     }
+ 
+     private static void check(byte[] d1, byte[] d2) throws Exception {
+diff --git a/test/jdk/sun/security/pkcs11/MessageDigest/TestCloning.java b/test/jdk/sun/security/pkcs11/MessageDigest/TestCloning.java
+index b931c8564b..ace601c723 100644
+--- a/test/jdk/sun/security/pkcs11/MessageDigest/TestCloning.java
++++ b/test/jdk/sun/security/pkcs11/MessageDigest/TestCloning.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012, 2018, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2012, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -23,7 +23,7 @@
+ 
+ /*
+  * @test
+- * @bug 6414899
++ * @bug 6414899 8242332
+  * @summary Ensure the cloning functionality works.
+  * @author Valerie Peng
+  * @library /test/lib ..
+@@ -37,13 +37,10 @@ import java.security.MessageDigest;
+ import java.security.Provider;
+ import java.util.Arrays;
+ import java.util.Random;
++import java.util.List;
+ 
+ public class TestCloning extends PKCS11Test {
+ 
+-    private static final String[] ALGOS = {
+-        "MD2", "MD5", "SHA1", "SHA-224", "SHA-256", "SHA-384", "SHA-512"
+-    };
+-
+     public static void main(String[] args) throws Exception {
+         main(new TestCloning(), args);
+     }
+@@ -51,44 +48,28 @@ public class TestCloning extends PKCS11Test {
+     private static final byte[] data1 = new byte[10];
+     private static final byte[] data2 = new byte[10*1024];
+ 
+-
+     @Override
+     public void main(Provider p) throws Exception {
++        List<String> ALGS = getSupportedAlgorithms("MessageDigest", "SHA", p);
+         Random r = new Random();
+         byte[] data1 = new byte[10];
+         byte[] data2 = new byte[2*1024];
+         r.nextBytes(data1);
+         r.nextBytes(data2);
+         System.out.println("Testing against provider " + p.getName());
+-        for (int i = 0; i < ALGOS.length; i++) {
+-            if (p.getService("MessageDigest", ALGOS[i]) == null) {
+-                System.out.println(ALGOS[i] + " is not supported, skipping");
+-                continue;
+-            } else {
+-                System.out.println("Testing " + ALGOS[i] + " of " + p.getName());
+-                MessageDigest md = MessageDigest.getInstance(ALGOS[i], p);
+-                try {
+-                    md = testCloning(md, p);
+-                    // repeat the test again after generating digest once
+-                    for (int j = 0; j < 10; j++) {
+-                        md = testCloning(md, p);
+-                    }
+-                } catch (Exception ex) {
+-                    if (ALGOS[i] == "MD2" &&
+-                        p.getName().equalsIgnoreCase("SunPKCS11-NSS")) {
+-                        // known bug in NSS; ignore for now
+-                        System.out.println("Ignore Known bug in MD2 of NSS");
+-                        continue;
+-                    }
+-                    throw ex;
+-                }
++        for (String alg : ALGS) {
++            System.out.println("Testing " + alg);
++            MessageDigest md = MessageDigest.getInstance(alg, p);
++            md = testCloning(md, p);
++            // repeat the test again after generating digest once
++            for (int j = 0; j < 10; j++) {
++                md = testCloning(md, p);
+             }
+         }
+     }
+ 
+     private static MessageDigest testCloning(MessageDigest mdObj, Provider p)
+-        throws Exception {
+-
++            throws Exception {
+         // copy#0: clone at state BLANK w/o any data
+         MessageDigest mdCopy0 = (MessageDigest) mdObj.clone();
+ 
+diff --git a/test/jdk/sun/security/pkcs11/Signature/ByteBuffers.java b/test/jdk/sun/security/pkcs11/Signature/ByteBuffers.java
+index 26eeacffed..f5de994779 100644
+--- a/test/jdk/sun/security/pkcs11/Signature/ByteBuffers.java
++++ b/test/jdk/sun/security/pkcs11/Signature/ByteBuffers.java
+@@ -23,7 +23,7 @@
+ 
+ /*
+  * @test
+- * @bug 4856966
++ * @bug 4856966 8242332
+  * @summary Test the Signature.update(ByteBuffer) method
+  * @author Andreas Sterbenz
+  * @library /test/lib ..
+@@ -70,10 +70,10 @@ public class ByteBuffers extends PKCS11Test {
+         random.nextBytes(t);
+ 
+         KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA", p);
+-        kpg.initialize(512);
++        kpg.initialize(2048);
+         KeyPair kp = kpg.generateKeyPair();
+ 
+-        Signature sig = Signature.getInstance("MD5withRSA", p);
++        Signature sig = Signature.getInstance("SHA256withRSA", p);
+         sig.initSign(kp.getPrivate());
+         sig.update(t);
+         byte[] signature = sig.sign();
+diff --git a/test/jdk/sun/security/pkcs11/Signature/InitAgainPSS.java b/test/jdk/sun/security/pkcs11/Signature/InitAgainPSS.java
+index ccd66599fb..a2fa729497 100644
+--- a/test/jdk/sun/security/pkcs11/Signature/InitAgainPSS.java
++++ b/test/jdk/sun/security/pkcs11/Signature/InitAgainPSS.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -25,7 +25,7 @@ import java.security.spec.*;
+ 
+ /**
+  * @test
+- * @bug 8080462
++ * @bug 8080462 8242332
+  * @summary Make sure old state is cleared when init is called again
+  * @library /test/lib ..
+  * @modules jdk.crypto.cryptoki
+@@ -38,18 +38,22 @@ public class InitAgainPSS extends PKCS11Test {
+ 
+     @Override
+     public void main(Provider p) throws Exception {
++        test("RSASSA-PSS", p);
++    }
++
++    private void test(String sigAlg, Provider p) throws Exception {
+         Signature s1;
+         try {
+-            s1 = Signature.getInstance("RSASSA-PSS", p);
++            s1 = Signature.getInstance(sigAlg, p);
+         } catch (NoSuchAlgorithmException e) {
+-            System.out.println("Skip testing RSASSA-PSS" +
++            System.out.println("Skip testing " + sigAlg +
+                 " due to no support");
+             return;
+         }
+ 
+         byte[] msg = "hello".getBytes();
+ 
+-        Signature s2 = Signature.getInstance("RSASSA-PSS", p);
++        Signature s2 = Signature.getInstance(sigAlg, p);
+ 
+         PSSParameterSpec params = new PSSParameterSpec("SHA-256", "MGF1",
+             new MGF1ParameterSpec("SHA-256"), 32,
+diff --git a/test/jdk/sun/security/pkcs11/Signature/KeyAndParamCheckForPSS.java b/test/jdk/sun/security/pkcs11/Signature/KeyAndParamCheckForPSS.java
+index 2e4fedbf1d..f1c0492b5f 100644
+--- a/test/jdk/sun/security/pkcs11/Signature/KeyAndParamCheckForPSS.java
++++ b/test/jdk/sun/security/pkcs11/Signature/KeyAndParamCheckForPSS.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -26,7 +26,7 @@ import java.security.spec.*;
+ 
+ /**
+  * @test
+- * @bug 8080462 8226651
++ * @bug 8080462 8226651 8242332
+  * @summary Ensure that PSS key and params check are implemented properly
+  *         regardless of call sequence
+  * @library /test/lib ..
+@@ -55,6 +55,7 @@ public class KeyAndParamCheckForPSS extends PKCS11Test {
+                 " due to no support");
+             return;
+         }
++
+         // NOTE: key length >= (digest length + 2) in bytes
+         // otherwise, even salt length = 0 would not work
+         runTest(p, 1024, "SHA-256", "SHA-256");
+@@ -66,10 +67,30 @@ public class KeyAndParamCheckForPSS extends PKCS11Test {
+         runTest(p, 1040, "SHA-512", "SHA-256");
+         runTest(p, 1040, "SHA-512", "SHA-384");
+         runTest(p, 1040, "SHA-512", "SHA-512");
++        runTest(p, 1024, "SHA3-256", "SHA3-256");
++        runTest(p, 1024, "SHA3-256", "SHA3-384");
++        runTest(p, 1024, "SHA3-256", "SHA3-512");
++        runTest(p, 1024, "SHA3-384", "SHA3-256");
++        runTest(p, 1024, "SHA3-384", "SHA3-384");
++        runTest(p, 1024, "SHA3-384", "SHA3-512");
++        runTest(p, 1040, "SHA3-512", "SHA3-256");
++        runTest(p, 1040, "SHA3-512", "SHA3-384");
++        runTest(p, 1040, "SHA3-512", "SHA3-512");
+     }
+ 
+     private void runTest(Provider p, int keySize, String hashAlg,
+             String mgfHashAlg) throws Exception {
++
++        // skip further test if this provider does not support hashAlg or
++        // mgfHashAlg
++        try {
++            MessageDigest.getInstance(hashAlg, p);
++            MessageDigest.getInstance(mgfHashAlg, p);
++        } catch (NoSuchAlgorithmException nsae) {
++            System.out.println("No support for " + hashAlg + ", skip");
++            return;
++        }
++
+         System.out.println("Testing [" + keySize + " " + hashAlg + "]");
+ 
+         // create a key pair with the supplied size
+@@ -95,6 +116,7 @@ public class KeyAndParamCheckForPSS extends PKCS11Test {
+         } catch (InvalidKeyException ike) {
+             System.out.println("test#1: got expected IKE");
+         }
++
+         sig.setParameter(paramsGood);
+         sig.initSign(priv);
+         System.out.println("test#1: pass");
+@@ -108,8 +130,10 @@ public class KeyAndParamCheckForPSS extends PKCS11Test {
+         } catch (InvalidKeyException ike) {
+             System.out.println("test#2: got expected IKE");
+         }
++
+         sig.setParameter(paramsGood);
+         sig.initVerify(pub);
++
+         System.out.println("test#2: pass");
+ 
+         // test#3 - initSign, then setParameter
+@@ -121,6 +145,7 @@ public class KeyAndParamCheckForPSS extends PKCS11Test {
+         } catch (InvalidAlgorithmParameterException iape) {
+             System.out.println("test#3: got expected IAPE");
+         }
++
+         sig.setParameter(paramsGood);
+         System.out.println("test#3: pass");
+ 
+@@ -133,6 +158,7 @@ public class KeyAndParamCheckForPSS extends PKCS11Test {
+         } catch (InvalidAlgorithmParameterException iape) {
+             System.out.println("test#4: got expected IAPE");
+         }
++
+         sig.setParameter(paramsGood);
+         System.out.println("test#4: pass");
+     }
+diff --git a/test/jdk/sun/security/pkcs11/Signature/ReinitSignature.java b/test/jdk/sun/security/pkcs11/Signature/ReinitSignature.java
+index 42ca7fa203..8c132ca7e4 100644
+--- a/test/jdk/sun/security/pkcs11/Signature/ReinitSignature.java
++++ b/test/jdk/sun/security/pkcs11/Signature/ReinitSignature.java
+@@ -23,312 +23,13 @@
+ 
+ /*
+  * @test
+- * @bug 4856966
++ * @bug 4856966 8242332
+  * @summary test that reinitializing Signatures works correctly
+  * @author Andreas Sterbenz
+  * @library /test/lib ..
+  * @key randomness
+  * @modules jdk.crypto.cryptoki
+  * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+- * @run main ReinitSignature
+  */
+ 
+ import java.security.KeyPair;
+@@ -363,11 +64,11 @@ public class ReinitSignature extends PKCS11Test {
+         }
+ 
+         KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA", p);
+-        kpg.initialize(512);
++        kpg.initialize(2048);
+         KeyPair kp = kpg.generateKeyPair();
+         PrivateKey privateKey = kp.getPrivate();
+         PublicKey publicKey = kp.getPublic();
+-        Signature sig = Signature.getInstance("MD5withRSA", p);
++        Signature sig = Signature.getInstance("SHA256withRSA", p);
+         byte[] data = new byte[10 * 1024];
+         new Random().nextBytes(data);
+         sig.initSign(privateKey);
+diff --git a/test/jdk/sun/security/pkcs11/Signature/SigInteropPSS.java b/test/jdk/sun/security/pkcs11/Signature/SigInteropPSS.java
+index 3c3edb5aa6..1114702277 100644
+--- a/test/jdk/sun/security/pkcs11/Signature/SigInteropPSS.java
++++ b/test/jdk/sun/security/pkcs11/Signature/SigInteropPSS.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -27,7 +27,7 @@ import java.security.interfaces.*;
+ 
+ /*
+  * @test
+- * @bug 8080462 8226651
++ * @bug 8080462 8226651 8242332
+  * @summary testing interoperability of PSS signatures of PKCS11 provider
+  *         against SunRsaSign provider
+  * @library /test/lib ..
+diff --git a/test/jdk/sun/security/pkcs11/Signature/SigInteropPSS2.java b/test/jdk/sun/security/pkcs11/Signature/SigInteropPSS2.java
+new file mode 100644
+index 0000000000..b8ea986332
+--- /dev/null
++++ b/test/jdk/sun/security/pkcs11/Signature/SigInteropPSS2.java
+@@ -0,0 +1,98 @@
++/*
++ * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ * This code is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only, as
++ * published by the Free Software Foundation.
++ *
++ * This code is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++ * version 2 for more details (a copy is included in the LICENSE file that
++ * accompanied this code).
++ *
++ * You should have received a copy of the GNU General Public License version
++ * 2 along with this work; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
++ * or visit www.oracle.com if you need additional information or have any
++ * questions.
++ */
++
++import java.security.*;
++import java.security.spec.*;
++import java.security.interfaces.*;
++
++/*
++ * @test
++ * @bug 8080462 8226651 8242332
++ * @summary testing interoperability of PSS signatures of PKCS11 provider
++ *         against SunRsaSign provider
++ * @library /test/lib ..
++ * @modules jdk.crypto.cryptoki
++ * @run main/othervm SigInteropPSS2
++ */
++public class SigInteropPSS2 extends PKCS11Test {
++
++    private static final byte[] MSG =
++        "Interoperability test between SunRsaSign and SunPKCS11".getBytes();
++
++    private static final String[] DIGESTS = {
++        "SHA224", "SHA256", "SHA384", "SHA512",
++        "SHA3-224", "SHA3-256", "SHA3-384", "SHA3-512"
++    };
++
++    public static void main(String[] args) throws Exception {
++        main(new SigInteropPSS2(), args);
++    }
++
++    @Override
++    public void main(Provider p) throws Exception {
++
++        Signature sigPkcs11;
++        Signature sigSunRsaSign =
++                Signature.getInstance("RSASSA-PSS", "SunRsaSign");
++
++        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA", p);
++            kpg.initialize(3072);
++        KeyPair kp = kpg.generateKeyPair();
++
++        for (String digest : DIGESTS) {
++            try {
++                sigPkcs11 = Signature.getInstance(digest + "withRSASSA-PSS", p);
++            } catch (NoSuchAlgorithmException e) {
++                System.out.println("Skip testing " + digest + "withRSASSA-PSS" +
++                    " due to no support");
++                continue;
++            }
++
++            runTest(sigPkcs11, sigSunRsaSign, kp);
++        }
++        System.out.println("Test passed");
++    }
++
++    static void runTest(Signature signer, Signature verifier, KeyPair kp)
++            throws Exception {
++        System.out.println("\tSign: " + signer.getProvider().getName());
++        System.out.println("\tVerify: " + verifier.getProvider().getName());
++
++        signer.initSign(kp.getPrivate());
++        signer.update(MSG);
++        byte[] sigBytes = signer.sign();
++
++        AlgorithmParameters signParams = signer.getParameters();
++        verifier.setParameter(signParams.getParameterSpec
++                (PSSParameterSpec.class));
++        verifier.initVerify(kp.getPublic());
++
++        verifier.update(MSG);
++        boolean isValid = verifier.verify(sigBytes);
++        if (isValid) {
++            System.out.println("\tPSS Signature verified");
++        } else {
++            throw new RuntimeException("ERROR verifying PSS Signature");
++        }
++    }
++}
+diff --git a/test/jdk/sun/security/pkcs11/Signature/SignatureTestPSS.java b/test/jdk/sun/security/pkcs11/Signature/SignatureTestPSS.java
+index 3a6dbe345e..4c1f7284bb 100644
+--- a/test/jdk/sun/security/pkcs11/Signature/SignatureTestPSS.java
++++ b/test/jdk/sun/security/pkcs11/Signature/SignatureTestPSS.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -27,7 +27,7 @@ import java.util.stream.IntStream;
+ 
+ /**
+  * @test
+- * @bug 8080462 8226651
++ * @bug 8080462 8226651 8242332
+  * @summary Generate a RSASSA-PSS signature and verify it using PKCS11 provider
+  * @library /test/lib ..
+  * @modules jdk.crypto.cryptoki
+@@ -40,8 +40,10 @@ public class SignatureTestPSS extends PKCS11Test {
+     private static final String SIGALG = "RSASSA-PSS";
+ 
+     private static final int[] KEYSIZES = { 2048, 3072 };
+-    private static final String[] DIGESTS = { "SHA-224", "SHA-256",
+-            "SHA-384" , "SHA-512" };
++    private static final String[] DIGESTS = {
++            "SHA-224", "SHA-256", "SHA-384" , "SHA-512",
++            "SHA3-224", "SHA3-256", "SHA3-384" , "SHA3-512",
++    };
+     private Provider prov;
+ 
+     /**
+@@ -115,7 +117,22 @@ public class SignatureTestPSS extends PKCS11Test {
+             throws NoSuchAlgorithmException, InvalidKeyException,
+             SignatureException, NoSuchProviderException,
+             InvalidAlgorithmParameterException {
+-        System.out.println("Testing against " + hash + " and MGF1_" + mgfHash);
++
++        String testName = hash + " and MGF1_" + mgfHash;
++        // only test RSASSA-PSS signature against the supplied hash/mgfHash
++        // if they are supported; otherwise PKCS11 library will throw
++        // CKR_MECHANISM_PARAM_INVALID at Signature.initXXX calls
++        try {
++            MessageDigest md = MessageDigest.getInstance(hash, prov);
++            if (!hash.equalsIgnoreCase(mgfHash)) {
++                md = MessageDigest.getInstance(mgfHash, prov);
++            }
++        } catch (NoSuchAlgorithmException nsae) {
++            System.out.println("Skip testing " + hash + "/" + mgfHash);
++            return;
++        }
++
++        System.out.println("Testing against " + testName);
+         Signature sig = Signature.getInstance(SIGALG, prov);
+         AlgorithmParameterSpec params = new PSSParameterSpec(
+             hash, "MGF1", new MGF1ParameterSpec(mgfHash), 0, 1);
+diff --git a/test/jdk/sun/security/pkcs11/Signature/SignatureTestPSS2.java b/test/jdk/sun/security/pkcs11/Signature/SignatureTestPSS2.java
+new file mode 100644
+index 0000000000..516b17972e
+--- /dev/null
++++ b/test/jdk/sun/security/pkcs11/Signature/SignatureTestPSS2.java
+@@ -0,0 +1,140 @@
++/*
++ * Copyright (c) 2020, Oracle and/or its affiliates. All rights reserved.
++ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
++ *
++ * This code is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only, as
++ * published by the Free Software Foundation.
++ *
++ * This code is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++ * version 2 for more details (a copy is included in the LICENSE file that
++ * accompanied this code).
++ *
++ * You should have received a copy of the GNU General Public License version
++ * 2 along with this work; if not, write to the Free Software Foundation,
++ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
++ * or visit www.oracle.com if you need additional information or have any
++ * questions.
++ */
++import java.security.*;
++import java.security.interfaces.*;
++import java.security.spec.*;
++import java.util.stream.IntStream;
++
++/**
++ * @test
++ * @bug 8244154 8242332
++ * @summary Generate a <digest>withRSASSA-PSS signature and verify it using
++ *         PKCS11 provider
++ * @library /test/lib ..
++ * @modules jdk.crypto.cryptoki
++ * @run main SignatureTestPSS2
++ */
++public class SignatureTestPSS2 extends PKCS11Test {
++
++    // PKCS11 does not support RSASSA-PSS keys yet
++    private static final String KEYALG = "RSA";
++    private static final String[] SIGALGS = {
++            "SHA224withRSASSA-PSS", "SHA256withRSASSA-PSS",
++            "SHA384withRSASSA-PSS", "SHA512withRSASSA-PSS",
++            "SHA3-224withRSASSA-PSS", "SHA3-256withRSASSA-PSS",
++            "SHA3-384withRSASSA-PSS", "SHA3-512withRSASSA-PSS"
++    };
++
++    private static final int[] KEYSIZES = { 2048, 3072 };
++
++    /**
++     * How much times signature updated.
++     */
++    private static final int UPDATE_TIMES = 2;
++
++    public static void main(String[] args) throws Exception {
++        main(new SignatureTestPSS2(), args);
++    }
++
++    @Override
++    public void main(Provider p) throws Exception {
++        for (String sa : SIGALGS) {
++            Signature sig;
++            try {
++                sig = Signature.getInstance(sa, p);
++            } catch (NoSuchAlgorithmException e) {
++                System.out.println("Skip testing " + sa +
++                    " due to no support");
++                return;
++            }
++            for (int i : KEYSIZES) {
++                runTest(sig, i);
++            }
++        }
++    }
++
++    private static void runTest(Signature s, int keySize) throws Exception {
++        byte[] data = new byte[100];
++        IntStream.range(0, data.length).forEach(j -> {
++            data[j] = (byte) j;
++        });
++        System.out.println("[KEYSIZE = " + keySize + "]");
++
++        // create a key pair
++        KeyPair kpair = generateKeys(KEYALG, keySize, s.getProvider());
++        test(s, kpair.getPrivate(), kpair.getPublic(), data);
++    }
++
++    private static void test(Signature sig, PrivateKey privKey,
++            PublicKey pubKey, byte[] data) throws RuntimeException {
++        // For signature algorithm, create and verify a signature
++        try {
++            checkSignature(sig, privKey, pubKey, data);
++        } catch (NoSuchAlgorithmException | InvalidKeyException |
++                 SignatureException | NoSuchProviderException ex) {
++            throw new RuntimeException(ex);
++        } catch (InvalidAlgorithmParameterException ex2) {
++            System.out.println("Skip test due to " + ex2);
++        }
++    }
++
++    private static KeyPair generateKeys(String keyalg, int size, Provider p)
++            throws NoSuchAlgorithmException {
++        KeyPairGenerator kpg = KeyPairGenerator.getInstance(keyalg, p);
++        kpg.initialize(size);
++        return kpg.generateKeyPair();
++    }
++
++    private static void checkSignature(Signature sig, PrivateKey priv,
++            PublicKey pub, byte[] data) throws NoSuchAlgorithmException,
++            InvalidKeyException, SignatureException, NoSuchProviderException,
++            InvalidAlgorithmParameterException {
++        System.out.println("Testing against " + sig.getAlgorithm());
++        sig.initSign(priv);
++        for (int i = 0; i < UPDATE_TIMES; i++) {
++            sig.update(data);
++        }
++        byte[] signedData = sig.sign();
++
++        // Make sure signature verifies with original data
++        // do we need to call sig.setParameter(params) again?
++        sig.initVerify(pub);
++        for (int i = 0; i < UPDATE_TIMES; i++) {
++            sig.update(data);
++        }
++        if (!sig.verify(signedData)) {
++            throw new RuntimeException("Failed to verify signature");
++        }
++
++        // Make sure signature does NOT verify when the original data
++        // has changed
++        sig.initVerify(pub);
++        for (int i = 0; i < UPDATE_TIMES + 1; i++) {
++            sig.update(data);
++        }
++
++        if (sig.verify(signedData)) {
++            throw new RuntimeException("Failed to detect bad signature");
++        }
++    }
++}
+diff --git a/test/jdk/sun/security/pkcs11/Signature/TestDSA2.java b/test/jdk/sun/security/pkcs11/Signature/TestDSA2.java
+index 222f8a2a5e..3161de6fc5 100644
+--- a/test/jdk/sun/security/pkcs11/Signature/TestDSA2.java
++++ b/test/jdk/sun/security/pkcs11/Signature/TestDSA2.java
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012, 2015, Oracle and/or its affiliates. All rights reserved.
++ * Copyright (c) 2012, 2020, Oracle and/or its affiliates. All rights reserved.
+  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+  *
+  * This code is free software; you can redistribute it and/or modify it
+@@ -22,7 +22,7 @@
+  */
+ /*
+  * @test
+- * @bug 8080462
++ * @bug 8080462 8242332
+  * @library /test/lib ..
+  * @modules jdk.crypto.cryptoki
+  * @run main/othervm/timeout=250 TestDSA2
+@@ -40,8 +40,12 @@ public class TestDSA2 extends PKCS11Test {
+     private static final String[] SIG_ALGOS = {
+         "SHA224withDSA",
+         "SHA256withDSA",
+-        //"SHA384withDSA",
+-        //"SHA512withDSA",
++        "SHA3-224withDSA",
++        "SHA3-256withDSA",
++        "SHA384withDSA",
++        "SHA512withDSA",
++        "SHA3-384withDSA",
++        "SHA3-512withDSA",
+     };
+ 
+     private static final int KEYSIZE = 2048;
+@@ -59,25 +63,33 @@ public class TestDSA2 extends PKCS11Test {
+             kp = kpg.generateKeyPair();
+         } catch (Exception ex) {
+             System.out.println("Skip due to no 2048-bit DSA support: " + ex);
+-            ex.printStackTrace();
+             return;
+         }
+ 
++        boolean allPass = true;
+         for (String sigAlg : SIG_ALGOS) {
+-            test(sigAlg, kp, p);
++            System.out.println("Testing " + sigAlg);
++            try {
++                Signature sig = Signature.getInstance(sigAlg, p);
++                test(sig, kp, p);
++            } catch (NoSuchAlgorithmException nsae) {
++                System.out.println("=>Skip due to no support");
++            } catch (Exception ex) {
++                System.out.println("Unexpected exception when testing " +
++                    sigAlg);
++                ex.printStackTrace();
++                allPass = false;
++            }
++        }
++        if (allPass) {
++            System.out.println("Tests Passed");
++        } else {
++            throw new RuntimeException("One or more tests failed");
+         }
+     }
+ 
+-    private static void test(String sigAlg, KeyPair kp, Provider p)
++    private static void test(Signature sig, KeyPair kp, Provider p)
+             throws Exception {
+-        Signature sig;
+-        try {
+-            sig = Signature.getInstance(sigAlg, p);
+-        } catch (Exception ex) {
+-            System.out.println("Skip due to no support: " + sigAlg);
+-            ex.printStackTrace();
+-            return;
+-        }
+ 
+         byte[] data = "anything will do".getBytes();
+ 
+@@ -85,9 +97,10 @@ public class TestDSA2 extends PKCS11Test {
+         sig.update(data);
+         byte[] signature = sig.sign();
+ 
+-        sig.initVerify(kp.getPublic());
+-        sig.update(data);
+-        boolean verifies = sig.verify(signature);
+-        System.out.println(sigAlg + ": Passed");
++        Signature sigV = Signature.getInstance(sig.getAlgorithm() , p);
++        sigV.initVerify(kp.getPublic());
++        sigV.update(data);
++        boolean verifies = sigV.verify(signature);
++        System.out.println("=> Passed");
+     }
+ }
+diff --git a/test/jdk/sun/security/pkcs11/Signature/TestRSAKeyLength.java b/test/jdk/sun/security/pkcs11/Signature/TestRSAKeyLength.java
+index f469ca17b6..7e5a012a5e 100644
+--- a/test/jdk/sun/security/pkcs11/Signature/TestRSAKeyLength.java
++++ b/test/jdk/sun/security/pkcs11/Signature/TestRSAKeyLength.java
+@@ -22,8 +22,8 @@
+  */
+ 
+ /*
+- * @test %W% %E%
+- * @bug 6695485
++ * @test
++ * @bug 6695485 8242332
+  * @summary Make sure initSign/initVerify() check RSA key lengths
+  * @author Yu-Ching Valerie Peng
+  * @library /test/lib ..
+@@ -65,9 +65,14 @@ public class TestRSAKeyLength extends PKCS11Test {
+             return;
+         }
+ 
+-        boolean isValidKeyLength[] = { true, true, true, false, false };
+-        String algos[] = { "SHA1withRSA", "SHA224withRSA", "SHA256withRSA",
+-                           "SHA384withRSA", "SHA512withRSA" };
++        boolean isValidKeyLength[] = {
++                true, true, true, false, false, true, true, false, false
++        };
++        String algos[] = {
++                "SHA1withRSA", "SHA224withRSA", "SHA256withRSA",
++                "SHA384withRSA", "SHA512withRSA", "SHA3-224withRSA",
++                "SHA3-256withRSA", "SHA3-384withRSA", "SHA3-512withRSA"
++        };
+         KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA", p);
+         kpg.initialize(512);
+         KeyPair kp = kpg.generateKeyPair();
+diff --git a/test/jdk/sun/security/pkcs11/nss/p11-nss.txt b/test/jdk/sun/security/pkcs11/nss/p11-nss.txt
+index 49778ea954..576b1dc4d6 100644
+--- a/test/jdk/sun/security/pkcs11/nss/p11-nss.txt
++++ b/test/jdk/sun/security/pkcs11/nss/p11-nss.txt
+@@ -11,12 +11,23 @@ library = ${pkcs11test.nss.lib}
+ 
+ nssArgs = "configdir='${pkcs11test.nss.db}' certPrefix='' keyPrefix='' secmod='secmod.db' flags=readOnly"
+ 
+-# HMAC_SHA256/384/512 broken until NSS 3.10.2
+-# see https://bugzilla.mozilla.org/show_bug.cgi?id=291858
+ disabledMechanisms = {
+-  CKM_SHA256_HMAC
+-  CKM_SHA384_HMAC
+-  CKM_SHA512_HMAC
++  CKM_DSA_SHA224
++  CKM_DSA_SHA256
++  CKM_DSA_SHA384
++  CKM_DSA_SHA512
++  CKM_DSA_SHA3_224
++  CKM_DSA_SHA3_256
++  CKM_DSA_SHA3_384
++  CKM_DSA_SHA3_512
++  CKM_ECDSA_SHA224
++  CKM_ECDSA_SHA256
++  CKM_ECDSA_SHA384
++  CKM_ECDSA_SHA512
++  CKM_ECDSA_SHA3_224
++  CKM_ECDSA_SHA3_256
++  CKM_ECDSA_SHA3_384
++  CKM_ECDSA_SHA3_512
+ }
+ 
+ attributes = compatibility
