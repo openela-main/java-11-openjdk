@@ -330,7 +330,7 @@
 # New Version-String scheme-style defines
 %global featurever 11
 %global interimver 0
-%global updatever 21
+%global updatever 22
 %global patchver 0
 # buildjdkver is usually same as %%{featurever},
 # but in time of bootstrap of next jdk, it is featurever-1,
@@ -383,7 +383,7 @@
 %global origin_nice     OpenJDK
 %global top_level_dir_name   %{vcstag}
 %global top_level_dir_name_backup %{top_level_dir_name}-backup
-%global buildver        9
+%global buildver        7
 # rpmrelease numbering must start at 2 to be later than the 8.6 RPM
 %global rpmrelease      2
 # Settings used by the portable build
@@ -1427,25 +1427,13 @@ Patch2002: jdk8242332-rh2108712-sha3-sunpkcs11.patch
 
 #############################################
 #
-# Patches appearing in 11.0.21
-#
-# This section includes patches which are present
-# in the listed OpenJDK 11u release and should be
-# able to be removed once that release is out
-# and used by this RPM.
-#############################################
-
-#############################################
-#
-# Patches appearing in 11.0.22
+# Patches appearing in 11.0.23
 #
 # This section includes patches which are present
 # in the listed OpenJDK 8u release and should be
 # able to be removed once that release is out
 # and used by this RPM.
 #############################################
-# JDK-8312489, OJ2095: Increase jdk.jar.maxSignatureFileSize default which is too low for JARs such as WhiteSource/Mend unified agent jar
-Patch2000: jdk8312489-max_sig_default_increase.patch
 
 BuildRequires: autoconf
 BuildRequires: automake
@@ -1874,8 +1862,6 @@ pushd %{top_level_dir_name}
 %patch1001 -p1
 # nss.cfg PKCS11 support; must come last as it also alters java.security
 %patch1000 -p1
-# JDK-8312489 backport, coming in 11.0.22
-%patch2000 -p1
 # PKCS11 SHA3 backport
 %patch2002 -p1
 # alt-java
@@ -2504,6 +2490,13 @@ end
 %endif
 
 %changelog
+* Wed Jan 10 2024 Andrew Hughes <gnu.andrew@redhat.com> - 1:11.0.22.0.7-1
+- Update to jdk-11.0.22+7 (GA)
+- Sync the copy of the portable specfile with the latest update
+- Drop local copy of JDK-8312489 which is now included upstream
+- ** This tarball is embargoed until 2024-01-16 @ 1pm PT. **
+- Resolves: RHEL-20981
+
 * Fri Oct 13 2023 Andrew Hughes <gnu.andrew@redhat.com> - 1:11.0.21.0.9-2
 - Update to jdk-11.0.21+9 (GA)
 - Sync the copy of the portable specfile with the latest update
