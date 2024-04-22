@@ -330,7 +330,7 @@
 # New Version-String scheme-style defines
 %global featurever 11
 %global interimver 0
-%global updatever 22
+%global updatever 23
 %global patchver 0
 # buildjdkver is usually same as %%{featurever},
 # but in time of bootstrap of next jdk, it is featurever-1,
@@ -383,11 +383,11 @@
 %global origin_nice     OpenJDK
 %global top_level_dir_name   %{vcstag}
 %global top_level_dir_name_backup %{top_level_dir_name}-backup
-%global buildver        7
+%global buildver        9
 # rpmrelease numbering must start at 2 to be later than the 8.6 RPM
-%global rpmrelease      2
+%global rpmrelease      3
 # Settings used by the portable build
-%global portablerelease 1
+%global portablerelease 2
 %global portablesuffix el8
 %global portablebuilddir /builddir/build/BUILD
 
@@ -1147,8 +1147,9 @@ Provides: jre%{?1} = %{epoch}:%{version}-%{release}
 Requires: ca-certificates
 # Require javapackages-filesystem for ownership of /usr/lib/jvm/ and macros
 Requires: javapackages-filesystem
-# 2023c required as of JDK-8305113
-Requires: tzdata-java >= 2023c
+# 2024a required as of JDK-8325150
+# Use 2023d until 2024a is in the buildroot
+Requires: tzdata-java >= 2023d
 # for support of kernel stream control
 # libsctp.so.1 is being `dlopen`ed on demand
 Requires: lksctp-tools%{?_isa}
@@ -1481,8 +1482,9 @@ BuildRequires: java-%{featurever}-openjdk-portable-misc = %{epoch}:%{version}-%{
 %ifarch %{zero_arches}
 BuildRequires: libffi-devel
 %endif
-# 2023c required as of JDK-8305113
-BuildRequires: tzdata-java >= 2023c
+# 2024a required as of JDK-8325150
+# Use 2023d until 2024a is in the buildroot
+BuildRequires: tzdata-java >= 2023d
 # Earlier versions have a bug in tree vectorization on PPC
 BuildRequires: gcc >= 4.8.3-8
 
@@ -1500,17 +1502,17 @@ BuildRequires: libjpeg-devel
 BuildRequires: libpng-devel
 %else
 # Version in src/java.desktop/share/native/libfreetype/include/freetype/freetype.h
-Provides: bundled(freetype) = 2.13.0
+Provides: bundled(freetype) = 2.13.2
 # Version in src/java.desktop/share/native/libsplashscreen/giflib/gif_lib.h
 Provides: bundled(giflib) = 5.2.1
 # Version in src/java.desktop/share/native/libharfbuzz/hb-version.h
-Provides: bundled(harfbuzz) = 7.2.0
+Provides: bundled(harfbuzz) = 8.2.2
 # Version in src/java.desktop/share/native/liblcms/lcms2.h
 Provides: bundled(lcms2) = 2.15.0
 # Version in src/java.desktop/share/native/libjavajpeg/jpeglib.h
 Provides: bundled(libjpeg) = 6b
 # Version in src/java.desktop/share/native/libsplashscreen/libpng/png.h
-Provides: bundled(libpng) = 1.6.39
+Provides: bundled(libpng) = 1.6.40
 %endif
 
 # this is always built, also during debug-only build
@@ -2490,6 +2492,23 @@ end
 %endif
 
 %changelog
+* Thu Apr 11 2024 Andrew Hughes <gnu.andrew@redhat.com> - 1:11.0.23.0.9-2
+- Fix 11.0.22 release date in NEWS
+
+* Wed Apr 10 2024 Anton Bobrov <abobrov@redhat.com> - 1:11.0.23.0.9-1
+- Update to jdk-11.0.23+9 (GA)
+- Update release notes to 11.0.23+9
+- Switch to GA mode for release
+- Require tzdata 2024a due to upstream inclusion of JDK-8322725
+- Only require tzdata 2023d for now as 2024a is unavailable in buildroot
+- ** This tarball is embargoed until 2024-04-16 @ 1pm PT. **
+- Resolves: RHEL-30917
+
+* Thu Mar 28 2024 Anton Bobrov <abobrov@redhat.com> - 1:11.0.23.0.1-0.1.ea
+- Update to jdk-11.0.23+1 (EA)
+- Update release notes to 11.0.23+1
+- Switch to EA mode
+
 * Wed Jan 10 2024 Andrew Hughes <gnu.andrew@redhat.com> - 1:11.0.22.0.7-1
 - Update to jdk-11.0.22+7 (GA)
 - Sync the copy of the portable specfile with the latest update

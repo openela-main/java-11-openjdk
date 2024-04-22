@@ -339,7 +339,7 @@
 # New Version-String scheme-style defines
 %global featurever 11
 %global interimver 0
-%global updatever 22
+%global updatever 23
 %global patchver 0
 # buildjdkver is usually same as %%{featurever},
 # but in time of bootstrap of next jdk, it is featurever-1,
@@ -392,8 +392,8 @@
 %global origin_nice     OpenJDK
 %global top_level_dir_name   %{vcstag}
 %global top_level_dir_name_backup %{top_level_dir_name}-backup
-%global buildver        7
-%global rpmrelease      1
+%global buildver        9
+%global rpmrelease      2
 #%%global tagsuffix     %%{nil}
 # Priority must be 8 digits in total; up to openjdk 1.8, we were using 18..... so when we moved to 11, we had to add another digit
 %if %is_system_jdk
@@ -571,7 +571,7 @@ Source0: openjdk-jdk%{featurever}u-%{vcstag}.tar.xz
 # Use 'icedtea_sync.sh' to update the following
 # They are based on code contained in the IcedTea project (6.x).
 # Systemtap tapsets. Zipped up to keep it small.
-Source8: tapsets-icedtea-%%{icedteaver}.tar.xz
+Source8: tapsets-icedtea-%{icedteaver}.tar.xz
 
 # Desktop files. Adapted from IcedTea
 # Disabled in portables
@@ -726,8 +726,9 @@ BuildRequires: java-%{buildjdkver}-openjdk-devel
 %ifarch %{zero_arches}
 BuildRequires: libffi-devel
 %endif
-# 2023c required as of JDK-8305113
-BuildRequires: tzdata-java >= 2023c
+# 2024a required as of JDK-8325150
+# Use 2023d until 2024a is in the buildroot
+BuildRequires: tzdata-java >= 2023d
 # cacerts build requirement in portable mode
 BuildRequires: ca-certificates
 # Earlier versions have a bug in tree vectorization on PPC
@@ -747,17 +748,17 @@ BuildRequires: libjpeg-devel
 BuildRequires: libpng-devel
 %else
 # Version in src/java.desktop/share/native/libfreetype/include/freetype/freetype.h
-Provides: bundled(freetype) = 2.13.0
+Provides: bundled(freetype) = 2.13.2
 # Version in src/java.desktop/share/native/libsplashscreen/giflib/gif_lib.h
 Provides: bundled(giflib) = 5.2.1
 # Version in src/java.desktop/share/native/libharfbuzz/hb-version.h
-Provides: bundled(harfbuzz) = 7.2.0
+Provides: bundled(harfbuzz) = 8.2.2
 # Version in src/java.desktop/share/native/liblcms/lcms2.h
 Provides: bundled(lcms2) = 2.15.0
 # Version in src/java.desktop/share/native/libjavajpeg/jpeglib.h
 Provides: bundled(libjpeg) = 6b
 # Version in src/java.desktop/share/native/libsplashscreen/libpng/png.h
-Provides: bundled(libpng) = 1.6.39
+Provides: bundled(libpng) = 1.6.40
 # We link statically against libstdc++ to increase portability
 BuildRequires: libstdc++-static
 %endif
@@ -1062,9 +1063,6 @@ function buildjdk() {
     bash ${top_dir_abs_src_path}/configure \
 %ifarch %{zero_arches}
     --with-jvm-variants=zero \
-%endif
-%ifarch %{ppc64le}
-    --with-jobs=1 \
 %endif
     --with-cacerts-file=`readlink -f %{_sysconfdir}/pki/java/cacerts`  \
     --with-version-build=%{buildver} \
@@ -1648,6 +1646,23 @@ done
 %{_jvmdir}/%{miscportablearchive}.sha256sum
 
 %changelog
+* Thu Apr 11 2024 Andrew Hughes <gnu.andrew@redhat.com> - 1:11.0.23.0.9-2
+- Fix 11.0.22 release date in NEWS
+
+* Wed Apr 10 2024 Anton Bobrov <abobrov@redhat.com> - 1:11.0.23.0.9-1
+- Update to jdk-11.0.23+9 (GA)
+- Update release notes to 11.0.23+9
+- Switch to GA mode for release
+- Require tzdata 2024a due to upstream inclusion of JDK-8322725
+- Only require tzdata 2023d for now as 2024a is unavailable in buildroot
+- Speed up PPC build by removing ppc64le --with-jobs=1 workaround
+- ** This tarball is embargoed until 2024-04-16 @ 1pm PT. **
+
+* Thu Mar 21 2024 Anton Bobrov <abobrov@redhat.com> - 1:11.0.23.0.1-0.1.ea
+- Update to jdk-11.0.23+1 (EA)
+- Update release notes to 11.0.23+1
+- Switch to EA mode
+
 * Wed Jan 10 2024 Andrew Hughes <gnu.andrew@redhat.com> - 1:11.0.22.0.7-1
 - Update to jdk-11.0.22+7 (GA)
 - Update release notes to 11.0.22+7
