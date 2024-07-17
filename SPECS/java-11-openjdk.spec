@@ -330,7 +330,7 @@
 # New Version-String scheme-style defines
 %global featurever 11
 %global interimver 0
-%global updatever 23
+%global updatever 24
 %global patchver 0
 # buildjdkver is usually same as %%{featurever},
 # but in time of bootstrap of next jdk, it is featurever-1,
@@ -383,9 +383,9 @@
 %global origin_nice     OpenJDK
 %global top_level_dir_name   %{vcstag}
 %global top_level_dir_name_backup %{top_level_dir_name}-backup
-%global buildver        9
+%global buildver        8
 # rpmrelease numbering must start at 2 to be later than the 9.0 RPM
-%global rpmrelease      3
+%global rpmrelease      2
 # Settings used by the portable build
 %global portablerelease 2
 %global portablerhel 8
@@ -1501,6 +1501,7 @@ BuildRequires: harfbuzz-devel
 BuildRequires: lcms2-devel
 BuildRequires: libjpeg-devel
 BuildRequires: libpng-devel
+BuildRequires: zlib-devel
 %else
 # Version in src/java.desktop/share/native/libfreetype/include/freetype/freetype.h
 Provides: bundled(freetype) = 2.13.2
@@ -1509,11 +1510,13 @@ Provides: bundled(giflib) = 5.2.1
 # Version in src/java.desktop/share/native/libharfbuzz/hb-version.h
 Provides: bundled(harfbuzz) = 8.2.2
 # Version in src/java.desktop/share/native/liblcms/lcms2.h
-Provides: bundled(lcms2) = 2.15.0
+Provides: bundled(lcms2) = 2.16.0
 # Version in src/java.desktop/share/native/libjavajpeg/jpeglib.h
 Provides: bundled(libjpeg) = 6b
 # Version in src/java.desktop/share/native/libsplashscreen/libpng/png.h
 Provides: bundled(libpng) = 1.6.40
+# Version in src/java.base/share/native/libzip/zlib/zlib.h
+Provides: bundled(zlib) = 1.3.1
 %endif
 
 # this is always built, also during debug-only build
@@ -2467,6 +2470,16 @@ require "copy_jdk_configs.lua"
 %endif
 
 %changelog
+* Wed Jul 10 2024 Anton Bobrov <abobrov@redhat.com> - 1:11.0.24.0.8-1
+- Update to jdk-11.0.24+8 (GA)
+- Update release notes to 11.0.24+8
+- Adjusted DTLS & RPATH NEWS entries to match OpenJDK 17 & 21 release notes
+- Switch to GA mode for release
+- Fix Provides to reflect up to date component versions
+- Add zlib build required or bundled version (1.3.1), depending on system_libs setting
+- Resolves: RHEL-45202
+- ** This tarball is embargoed until 2024-07-16 @ 1pm PT. **
+
 * Thu Apr 11 2024 Andrew Hughes <gnu.andrew@redhat.com> - 1:11.0.23.0.9-2
 - Fix 11.0.22 release date in NEWS
 
