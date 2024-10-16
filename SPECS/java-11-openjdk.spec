@@ -26,8 +26,6 @@
 %bcond_without release
 # Enable static library builds by default.
 %bcond_without staticlibs
-# Remove build artifacts by default
-%bcond_with artifacts
 # Build a fresh libjvm.so for use in a copy of the bootstrap JDK
 %bcond_without fresh_libjvm
 # Build with system libraries
@@ -62,6 +60,9 @@
 # This fixes detailed NMT and other tools which need minimal debug info.
 # See: https://bugzilla.redhat.com/show_bug.cgi?id=1520879
 %global _find_debuginfo_opts -g
+
+# Architecture on which we run Java only tests
+%global jdk_test_arch x86_64
 
 # note: parametrized macros are order-sensitive (unlike not-parametrized) even with normal macros
 # also necessary when passing it as parameter to other macros. If not macro, then it is considered a switch
@@ -330,7 +331,7 @@
 # New Version-String scheme-style defines
 %global featurever 11
 %global interimver 0
-%global updatever 24
+%global updatever 25
 %global patchver 0
 # buildjdkver is usually same as %%{featurever},
 # but in time of bootstrap of next jdk, it is featurever-1,
@@ -383,11 +384,11 @@
 %global origin_nice     OpenJDK
 %global top_level_dir_name   %{vcstag}
 %global top_level_dir_name_backup %{top_level_dir_name}-backup
-%global buildver        8
+%global buildver        9
 # rpmrelease numbering must start at 2 to be later than the 9.0 RPM
 %global rpmrelease      2
 # Settings used by the portable build
-%global portablerelease 2
+%global portablerelease 1
 %global portablerhel 8
 %global portablesuffix el%{portablerhel}
 %global portablebuilddir /builddir/build/BUILD
@@ -1150,7 +1151,7 @@ Requires: ca-certificates
 Requires: javapackages-filesystem
 # 2024a required as of JDK-8325150
 # Use 2023d until 2024a is in the buildroot
-Requires: tzdata-java >= 2023d
+Requires: tzdata-java >= 2024a
 # for support of kernel stream control
 # libsctp.so.1 is being `dlopen`ed on demand
 Requires: lksctp-tools%{?_isa}
@@ -1485,7 +1486,7 @@ BuildRequires: libffi-devel
 %endif
 # 2024a required as of JDK-8325150
 # Use 2023d until 2024a is in the buildroot
-BuildRequires: tzdata-java >= 2023d
+BuildRequires: tzdata-java >= 2024a
 # Earlier versions have a bug in tree vectorization on PPC
 BuildRequires: gcc >= 4.8.3-8
 
@@ -1506,7 +1507,7 @@ BuildRequires: zlib-devel
 # Version in src/java.desktop/share/native/libfreetype/include/freetype/freetype.h
 Provides: bundled(freetype) = 2.13.2
 # Version in src/java.desktop/share/native/libsplashscreen/giflib/gif_lib.h
-Provides: bundled(giflib) = 5.2.1
+Provides: bundled(giflib) = 5.2.2
 # Version in src/java.desktop/share/native/libharfbuzz/hb-version.h
 Provides: bundled(harfbuzz) = 8.2.2
 # Version in src/java.desktop/share/native/liblcms/lcms2.h
@@ -1514,7 +1515,7 @@ Provides: bundled(lcms2) = 2.16.0
 # Version in src/java.desktop/share/native/libjavajpeg/jpeglib.h
 Provides: bundled(libjpeg) = 6b
 # Version in src/java.desktop/share/native/libsplashscreen/libpng/png.h
-Provides: bundled(libpng) = 1.6.40
+Provides: bundled(libpng) = 1.6.43
 # Version in src/java.base/share/native/libzip/zlib/zlib.h
 Provides: bundled(zlib) = 1.3.1
 %endif
@@ -1995,26 +1996,54 @@ export JAVA_HOME=$(pwd)/%{installoutputdir -- ${suffix}}
 $JAVA_HOME/bin/java -XX:+UseShenandoahGC -version
 %endif
 
-# Check unlimited policy has been used
-$JAVA_HOME/bin/javac -d . %{SOURCE13}
-$JAVA_HOME/bin/java --add-opens java.base/javax.crypto=ALL-UNNAMED TestCryptoLevel
+# Only test on one architecture (the fastest) for Java only tests
+%ifarch %{jdk_test_arch}
 
-# Check ECC is working
-$JAVA_HOME/bin/javac -d . %{SOURCE14}
-$JAVA_HOME/bin/java $(echo $(basename %{SOURCE14})|sed "s|\.java||")
+    # Check unlimited policy has been used
+    $JAVA_HOME/bin/javac -d . %{SOURCE13}
+    $JAVA_HOME/bin/java --add-opens java.base/javax.crypto=ALL-UNNAMED TestCryptoLevel
 
-# Check system crypto (policy) is active and can be disabled
-# Test takes a single argument - true or false - to state whether system
-# security properties are enabled or not.
-$JAVA_HOME/bin/javac -d . %{SOURCE15}
-export PROG=$(echo $(basename %{SOURCE15})|sed "s|\.java||")
-export SEC_DEBUG="-Djava.security.debug=properties"
-$JAVA_HOME/bin/java ${SEC_DEBUG} ${PROG} true
-$JAVA_HOME/bin/java ${SEC_DEBUG} -Djava.security.disableSystemPropertiesFile=true ${PROG} false
+    # Check ECC is working
+    $JAVA_HOME/bin/javac -d . %{SOURCE14}
+    $JAVA_HOME/bin/java $(echo $(basename %{SOURCE14})|sed "s|\.java||")
 
-# Check correct vendor values have been set
-$JAVA_HOME/bin/javac -d . %{SOURCE16}
-$JAVA_HOME/bin/java $(echo $(basename %{SOURCE16})|sed "s|\.java||") "%{oj_vendor}" "%{oj_vendor_url}" "%{oj_vendor_bug_url}" "%{oj_vendor_version}"
+    # Check system crypto (policy) is active and can be disabled
+    # Test takes a single argument - true or false - to state whether system
+    # security properties are enabled or not.
+    $JAVA_HOME/bin/javac -d . %{SOURCE15}
+    export PROG=$(echo $(basename %{SOURCE15})|sed "s|\.java||")
+    export SEC_DEBUG="-Djava.security.debug=properties"
+    $JAVA_HOME/bin/java ${SEC_DEBUG} ${PROG} true
+    $JAVA_HOME/bin/java ${SEC_DEBUG} -Djava.security.disableSystemPropertiesFile=true ${PROG} false
+
+    # Check correct vendor values have been set
+    $JAVA_HOME/bin/javac -d . %{SOURCE16}
+    $JAVA_HOME/bin/java $(echo $(basename %{SOURCE16})|sed "s|\.java||") "%{oj_vendor}" "%{oj_vendor_url}" "%{oj_vendor_bug_url}" "%{oj_vendor_version}"
+
+    # Check translations are available for new timezones
+    $JAVA_HOME/bin/javac -d . %{SOURCE18}
+    $JAVA_HOME/bin/java $(echo $(basename %{SOURCE18})|sed "s|\.java||") JRE
+    $JAVA_HOME/bin/java -Djava.locale.providers=CLDR $(echo $(basename %{SOURCE18})|sed "s|\.java||") CLDR
+
+    # Check src.zip has all sources. See RHBZ#1130490
+    $JAVA_HOME/bin/jar -tf $JAVA_HOME/lib/src.zip | grep 'sun.misc.Unsafe'
+
+    # Check class files include useful debugging information
+    $JAVA_HOME/bin/javap -l java.lang.Object | grep "Compiled from"
+    $JAVA_HOME/bin/javap -l java.lang.Object | grep LineNumberTable
+    $JAVA_HOME/bin/javap -l java.lang.Object | grep LocalVariableTable
+
+    # Check generated class files include useful debugging information
+    $JAVA_HOME/bin/javap -l java.nio.ByteBuffer | grep "Compiled from"
+    $JAVA_HOME/bin/javap -l java.nio.ByteBuffer | grep LineNumberTable
+    $JAVA_HOME/bin/javap -l java.nio.ByteBuffer | grep LocalVariableTable
+
+%else
+
+    # Just run a basic java -version test on other architectures
+    $JAVA_HOME/bin/java -version
+
+%endif
 
 # Check java launcher has no SSB mitigation
 if ! nm $JAVA_HOME/bin/java | grep set_speculation ; then true ; else false; fi
@@ -2025,11 +2054,6 @@ nm $JAVA_HOME/bin/%{alt_java_name} | grep set_speculation
 %else
 if ! nm $JAVA_HOME/bin/%{alt_java_name} | grep set_speculation ; then true ; else false; fi
 %endif
-
-# Check translations are available for new timezones
-$JAVA_HOME/bin/javac -d . %{SOURCE18}
-$JAVA_HOME/bin/java $(echo $(basename %{SOURCE18})|sed "s|\.java||") JRE
-$JAVA_HOME/bin/java -Djava.locale.providers=CLDR $(echo $(basename %{SOURCE18})|sed "s|\.java||") CLDR
 
 %if %{include_staticlibs}
 # Check debug symbols in static libraries (smoke test)
@@ -2103,19 +2127,6 @@ EOF
 %ifarch %{gdb_arches}
 grep 'JavaCallWrapper::JavaCallWrapper' gdb.out
 %endif
-
-# Check src.zip has all sources. See RHBZ#1130490
-$JAVA_HOME/bin/jar -tf $JAVA_HOME/lib/src.zip | grep 'sun.misc.Unsafe'
-
-# Check class files include useful debugging information
-$JAVA_HOME/bin/javap -l java.lang.Object | grep "Compiled from"
-$JAVA_HOME/bin/javap -l java.lang.Object | grep LineNumberTable
-$JAVA_HOME/bin/javap -l java.lang.Object | grep LocalVariableTable
-
-# Check generated class files include useful debugging information
-$JAVA_HOME/bin/javap -l java.nio.ByteBuffer | grep "Compiled from"
-$JAVA_HOME/bin/javap -l java.nio.ByteBuffer | grep LineNumberTable
-$JAVA_HOME/bin/javap -l java.nio.ByteBuffer | grep LocalVariableTable
 
 # build cycles check
 done
@@ -2470,6 +2481,41 @@ require "copy_jdk_configs.lua"
 %endif
 
 %changelog
+* Thu Oct 10 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.9-2
+- Update to jdk-11.0.25+9 (GA)
+- Update release notes to 11.0.25+9
+- Switch to GA mode for release
+- Related: RHEL-58775
+- ** This tarball is embargoed until 2024-10-15 @ 1pm PT. **
+
+* Tue Oct 08 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.8-0.1.ea
+- Update to jdk-11.0.25+8 (EA)
+- Update release notes to 11.0.25+8
+- Related: RHEL-58775
+
+* Fri Oct 04 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.7-0.3.ea
+- RHJDKBP-875 - Added gating.yaml and/or rpminspect.yaml
+- RHJDKBP-874 - Removed %bcond_with artifacts
+- Related: RHEL-58775
+
+* Fri Sep 27 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.7-0.2.ea
+- Update to jdk-11.0.25+7 (EA)
+- Update release notes to 11.0.25+7
+- Related: RHEL-58775
+
+* Wed Sep 25 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.6-0.3.ea
+- Limit Java only tests to one 'jdk_test_arch'
+- Related: RHEL-58775
+- Resolves: RHEL-59730
+
+* Wed Sep 25 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.6-0.2.ea
+- Update to jdk-11.0.25+6 (EA)
+- Update release notes to 11.0.25+6
+- Switch to EA mode
+- Bump giflib version to 5.2.2 following JDK-8328999
+- Bump libpng version to 1.6.43 following JDK-8329004
+- Related: RHEL-58775
+
 * Wed Jul 10 2024 Anton Bobrov <abobrov@redhat.com> - 1:11.0.24.0.8-1
 - Update to jdk-11.0.24+8 (GA)
 - Update release notes to 11.0.24+8
