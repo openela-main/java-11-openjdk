@@ -111,7 +111,7 @@
 %define is_release_build() %( if [ "%{?1}" == "%{debug_suffix_unquoted}" -o "%{?1}" == "%{fastdebug_suffix_unquoted}" ]; then echo "0" ; else echo "1"; fi )
 
 # Indicates whether this is the default JDK on this version of RHEL
-%global is_system_jdk 1
+%global is_system_jdk 0
 
 %global aarch64         aarch64 arm64 armv8
 # we need to distinguish between big and little endian PPC64
@@ -386,7 +386,7 @@
 %global top_level_dir_name_backup %{top_level_dir_name}-backup
 %global buildver        9
 # rpmrelease numbering must start at 2 to be later than the 9.0 RPM
-%global rpmrelease      2
+%global rpmrelease      3
 # Settings used by the portable build
 %global portablerelease 1
 %global portablerhel 8
@@ -2481,6 +2481,11 @@ require "copy_jdk_configs.lua"
 %endif
 
 %changelog
+* Thu Oct 17 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.9-3
+- Make java-11-openjdk NOT the default JDK in rhel-9.2.0.z, rhel-9.4.z, rhel-9.5.z
+- Resolves: RHEL-63042 
+- See-Also: RHEL-63043 RHEL-63044
+
 * Thu Oct 10 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.9-2
 - Update to jdk-11.0.25+9 (GA)
 - Update release notes to 11.0.25+9
