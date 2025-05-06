@@ -111,7 +111,14 @@
 %define is_release_build() %( if [ "%{?1}" == "%{debug_suffix_unquoted}" -o "%{?1}" == "%{fastdebug_suffix_unquoted}" ]; then echo "0" ; else echo "1"; fi )
 
 # Indicates whether this is the default JDK on this version of RHEL
+# Following the end of full support for OpenJDK 11 on 2024-10-31,
+# OpenJDK 11 is now only the system JDK on x86_32, where there is
+# no java-17-openjdk package as an alternative.
+%ifarch %{ix86}
+%global is_system_jdk 1
+%else
 %global is_system_jdk 0
+%endif
 
 %global aarch64         aarch64 arm64 armv8
 # we need to distinguish between big and little endian PPC64
@@ -386,7 +393,7 @@
 %global top_level_dir_name_backup %{top_level_dir_name}-backup
 %global buildver        9
 # rpmrelease numbering must start at 2 to be later than the 9.0 RPM
-%global rpmrelease      3
+%global rpmrelease      7
 # Settings used by the portable build
 %global portablerelease 1
 %global portablerhel 8
@@ -1149,9 +1156,6 @@ Provides: jre%{?1} = %{epoch}:%{version}-%{release}
 Requires: ca-certificates
 # Require javapackages-filesystem for ownership of /usr/lib/jvm/ and macros
 Requires: javapackages-filesystem
-# 2024a required as of JDK-8325150
-# Use 2023d until 2024a is in the buildroot
-Requires: tzdata-java >= 2024a
 # for support of kernel stream control
 # libsctp.so.1 is being `dlopen`ed on demand
 Requires: lksctp-tools%{?_isa}
@@ -1159,7 +1163,7 @@ Requires: lksctp-tools%{?_isa}
 # tool to copy jdk's configs - should be Recommends only, but then only dnf/yum enforce it,
 # not rpm transaction and so no configs are persisted when pure rpm -u is run. It may be
 # considered as regression
-Requires: copy-jdk-configs >= 3.3
+Requires: copy-jdk-configs >= 4.0
 OrderWithRequires: copy-jdk-configs
 %endif
 # for printing support
@@ -1484,9 +1488,6 @@ BuildRequires: java-%{featurever}-openjdk-portable-misc = %{epoch}:%{version}-%{
 %ifarch %{zero_arches}
 BuildRequires: libffi-devel
 %endif
-# 2024a required as of JDK-8325150
-# Use 2023d until 2024a is in the buildroot
-BuildRequires: tzdata-java >= 2024a
 # Earlier versions have a bug in tree vectorization on PPC
 BuildRequires: gcc >= 4.8.3-8
 
@@ -1914,10 +1915,6 @@ function customisejdk() {
         # Turn on system security properties
         sed -i -e "s:^security.useSystemPropertiesFile=.*:security.useSystemPropertiesFile=true:" \
             ${imagepath}/conf/security/java.security
-
-        # Use system-wide tzdata
-        rm ${imagepath}/lib/tzdb.dat
-        ln -s %{_datadir}/javazi-1.8/tzdb.dat ${imagepath}/lib/tzdb.dat
      fi
 }
 
@@ -2255,7 +2252,13 @@ done
 -- whether copy-jdk-configs is installed or not. If so, then configs are copied
 -- (copy_jdk_configs from %%{_libexecdir} used) or not copied at all
 local posix = require "posix"
-local debug = false
+
+if (os.getenv("debug") == "true") then
+  debug = true;
+  print("cjc: in spec debug is on")
+else 
+  debug = false;
+end
 
 SOURCE1 = "%{rpm_state_dir}/copy_jdk_configs.lua"
 SOURCE2 = "%{_libexecdir}/copy_jdk_configs.lua"
@@ -2283,9 +2286,10 @@ else
   return
   end
 end
--- run content of included file with fake args
-arg = {"--currentjvm", "%{uniquesuffix %{nil}}", "--jvmdir", "%{_jvmdir %{nil}}", "--origname", "%{name}", "--origjavaver", "%{javaver}", "--arch", "%{_arch}", "--temp", "%{rpm_state_dir}/%{name}.%{_arch}"}
-require "copy_jdk_configs.lua"
+arg = nil ;  -- it is better to null the arg up, no meter if they exists or not, and use cjc as module in unified way, instead of relaying on "main" method during require "copy_jdk_configs.lua"
+cjc = require "copy_jdk_configs.lua"
+args = {"--currentjvm", "%{uniquesuffix %{nil}}", "--jvmdir", "%{_jvmdir %{nil}}", "--origname", "%{name}", "--origjavaver", "%{javaver}", "--arch", "%{_arch}", "--temp", "%{rpm_state_dir}/%{name}.%{_arch}"}
+cjc.mainProgram(args)
 
 %post
 %{post_script %{nil}}
@@ -2481,10 +2485,30 @@ require "copy_jdk_configs.lua"
 %endif
 
 %changelog
+* Tue Jan 14 2025 Jiri Vanek <jvanek@redhat.com> - 1:11.0.25.0.9-3
+- Adapted to newest copy-jdk-configs to fix issue with rpm 4.17
+- Disable copy-jdk-configs for Flatpak builds
+- Removed copy-jdk-configs backward compatibility to fix when both rpm 4.16 and 4.17 are in transaction
+- Resolves: RHEL-73880
+- See-Also: RHEL-73881
+- See-Also: RHEL-73882
+- See-Also: RHEL-73873
+
+* Fri Dec 20 2024 Andrew Hughes <gnu.andrew@redhat.com> - 1:11.0.25.0.9-6
+- Make java-11-openjdk the default JDK only on RHEL x86_32
+- Drop system timezone data dependency from base RHEL 11u builds
+- Resolves: RHEL-70599
+- See-Also: RHEL-70600
+- See-Also: RHEL-70601
+- Resolves: RHEL-71242
+- See-Also: RHEL-71243
+- See-Also: RHEL-71244
+
 * Thu Oct 17 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.9-3
 - Make java-11-openjdk NOT the default JDK in rhel-9.2.0.z, rhel-9.4.z, rhel-9.5.z
 - Resolves: RHEL-63042 
-- See-Also: RHEL-63043 RHEL-63044
+- See-Also: RHEL-63043
+- See-Also: RHEL-63044
 
 * Thu Oct 10 2024 Antonio Vieiro <avieirov@redhat.com> - 1:11.0.25.0.9-2
 - Update to jdk-11.0.25+9 (GA)
